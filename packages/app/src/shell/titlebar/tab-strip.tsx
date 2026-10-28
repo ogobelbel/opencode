@@ -682,17 +682,25 @@ function TabChildren(props: {
   const language = useLanguage()
   const roots = createMemo(() => subagentSessions(props.serverCtx, props.tab.sessionId))
 
-  const rows = (list: SessionInfo[], depth: number): JSX.Element => (
+  // One line per subagent: the guide line carries the nesting, so the row only needs its title.
+  const rows = (list: SessionInfo[]): JSX.Element => (
     <For each={list}>
       {(session) => {
         const children = createMemo(() => subagentSessions(props.serverCtx, props.tab.sessionId, session.id))
 
         return (
           <>
-            <div
-              class="flex w-full min-w-0 items-center gap-1.5"
-              style={{ "padding-inline-start": `${6 + (depth + 1) * 14}px` }}
+            <button
+              type="button"
+              data-slot="vertical-tab-child"
+              class="relative flex h-6 w-full min-w-0 items-center gap-1.5 rounded-[4px] pe-1.5 ps-2 text-start text-[12px] leading-4 text-v2-text-text-faint hover:bg-v2-overlay-simple-overlay-hover focus-visible:outline-none focus-visible:bg-v2-overlay-simple-overlay-hover"
+              onClick={() => props.onOpen(session)}
             >
+              {/* The elbow joining this row to the guide line. */}
+              <span
+                aria-hidden="true"
+                class="pointer-events-none absolute start-0 top-1/2 h-px w-[7px] bg-v2-border-border-muted"
+              />
               <Show when={children().length > 0}>
                 <Disclosure
                   expanded={!!props.expanded[session.id]}
@@ -700,17 +708,20 @@ function TabChildren(props: {
                   onToggle={() => props.onToggle(session.id)}
                 />
               </Show>
-              <button
-                type="button"
-                class="flex h-7 min-w-0 flex-1 items-center rounded-[6px] px-1.5 text-start text-[13px] leading-4 text-v2-text-text-faint hover:bg-v2-overlay-simple-overlay-hover focus-visible:outline-none focus-visible:bg-v2-overlay-simple-overlay-hover"
-                onClick={() => props.onOpen(session)}
-              >
-                <span dir="auto" class="min-w-0 truncate">
-                  {sessionTabTitle(session.title, language.t("session.tab.session"))}
-                </span>
-              </button>
-            </div>
-            <Show when={props.expanded[session.id]}>{rows(children(), depth + 1)}</Show>
+              <span dir="auto" class="min-w-0 flex-1 truncate">
+                {sessionTabTitle(session.title, language.t("session.tab.session"))}
+              </span>
+            </button>
+            <Show when={props.expanded[session.id]}>
+              {/* A guide line runs down the children, one step further in per level. */}
+              <div class="relative" style={{ "margin-inline-start": "14px" }}>
+                <span
+                  aria-hidden="true"
+                  class="pointer-events-none absolute inset-y-0 start-0 w-px bg-v2-border-border-muted"
+                />
+                {rows(children())}
+              </div>
+            </Show>
           </>
         )
       }}
@@ -720,7 +731,10 @@ function TabChildren(props: {
   return (
     <Show when={props.open && roots().length > 0}>
       <div data-slot="vertical-tab-children" class="flex flex-col gap-px pb-1">
-        {rows(roots(), 0)}
+        <div class="relative" style={{ "margin-inline-start": "14px" }}>
+          <span aria-hidden="true" class="pointer-events-none absolute inset-y-0 start-0 w-px bg-v2-border-border-muted" />
+          {rows(roots())}
+        </div>
       </div>
     </Show>
   )
