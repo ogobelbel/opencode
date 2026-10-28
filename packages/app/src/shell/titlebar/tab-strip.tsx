@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createResource, For, onCleanup, Show } from "solid-js"
+import { createEffect, createMemo, createResource, For, onCleanup, Show, type JSX } from "solid-js"
 import { createStore } from "solid-js/store"
 import { DragDropProvider, PointerSensor } from "@dnd-kit/solid"
 import { isSortable, useSortable } from "@dnd-kit/solid/sortable"
@@ -23,9 +23,11 @@ import { useDialog } from "@opencode/ui/context/dialog"
 import { Dialog, DialogFooter, DialogHeader, DialogTitleGroup } from "@opencode/ui/dialog"
 import { sessionTreeIDs } from "@/session/requests/session-request-tree"
 import { sessionTitle } from "@/session/title"
+import { sessionTabTitle } from "./tab-title"
 import { errorMessage } from "@/shell/layout/helpers"
 import { notifySessionTabsRemoved } from "./session-events"
 import { setSidebarUnread } from "@/shell/sidebar-peek"
+import { Disclosure } from "./disclosure"
 import type { SessionInfo } from "@opencode/client/promise"
 
 export const previousSessionCommand = { id: "session.previous", keybind: "alt+arrowup" }
@@ -43,6 +45,9 @@ function SessionTabSlot(props: {
   unread: boolean
   attention: boolean
   loading: boolean
+  childCount: number
+  expanded: boolean
+  onToggleChildren: () => void
   fallbackTitle?: string
   fallbackDirectory?: string
   onRename: (title: string) => Promise<void>
@@ -88,6 +93,9 @@ function SessionTabSlot(props: {
         unread={props.unread}
         attention={props.attention}
         loading={props.loading}
+        childCount={props.childCount}
+        expanded={props.expanded}
+        onToggleChildren={props.onToggleChildren}
         fallbackTitle={props.fallbackTitle}
         fallbackDirectory={props.fallbackDirectory}
         onRename={props.onRename}
@@ -110,6 +118,8 @@ function SessionTabEntry(props: {
   active: boolean
   orientation: "horizontal" | "vertical"
   serverCtx: ServerCtx | undefined
+  expanded: boolean
+  onToggleChildren: () => void
   onVisibleChange: (visible: boolean) => void
   onUnreadChange: (unread: boolean) => void
   onNavigate: (element: HTMLDivElement) => void
@@ -149,6 +159,7 @@ function SessionTabEntry(props: {
   const session = createMemo(() => (pending() ? undefined : (cachedSession() ?? loadedSession())))
   const missingSession = createMemo(() => !pending() && !!props.serverCtx && !loadedSession.loading && !session())
   const visible = createMemo(() => !!pending() || !!session() || missingSession() || !!persisted()?.title)
+  const childCount = createMemo(() => subagentSessions(props.serverCtx, props.tab.sessionId).length)
 
   const rename = async (title: string) => {
     const value = session()
@@ -313,6 +324,9 @@ function SessionTabEntry(props: {
         unread={unread()}
         attention={status.attention()}
         loading={status.loading()}
+        childCount={childCount()}
+        expanded={props.expanded}
+        onToggleChildren={props.onToggleChildren}
         fallbackTitle={
           pending()
             ? language.t("session.tab.session")
@@ -390,10 +404,13 @@ export function TitlebarTabStrip(props: {
   const global = useGlobal()
   const language = useLanguage()
   const command = useCommand()
+  const tabs = useTabs()
   const vertical = () => props.orientation === "vertical"
   let listRef!: HTMLDivElement
   const [visibility, setVisibility] = createStore<Record<string, boolean>>({})
   const [unread, setUnread] = createStore<Record<string, boolean>>({})
+  // Which rows show their subagent sessions. Kept in memory: the tree follows the work, not the layout.
+  const [expanded, setExpanded] = createStore<Record<string, boolean>>({})
   const visibleTabs = createMemo(() => props.tabs.filter((tab) => tab.type === "draft" || visibility[tabKey(tab)]))
   const visibleTabIds = () => visibleTabs().map(tabKey)
 
@@ -567,22 +584,39 @@ export function TitlebarTabStrip(props: {
 
                 if (tab.type === "session") {
                   return (
-                    <SessionTabEntry
-                      tab={tab}
-                      currentTab={props.currentTab}
-                      id={id}
-                      index={visibleIndex()}
-                      active={props.currentTab === tab}
-                      orientation={vertical() ? "vertical" : "horizontal"}
-                      serverCtx={serverCtx()}
-                      onVisibleChange={(visible) => setVisibility(id, visible)}
-                      onUnreadChange={(value) => setUnread(id, value)}
-                      onNavigate={(element) => {
-                        ref = element
-                        props.onNavigate(tab, element)
-                      }}
-                      onClose={() => props.onClose(tab)}
-                    />
+                    <>
+                      <SessionTabEntry
+                        tab={tab}
+                        currentTab={props.currentTab}
+                        id={id}
+                        index={visibleIndex()}
+                        active={props.currentTab === tab}
+                        orientation={vertical() ? "vertical" : "horizontal"}
+                        serverCtx={serverCtx()}
+                        expanded={!!expanded[id]}
+                        onToggleChildren={() => setExpanded(id, !expanded[id])}
+                        onVisibleChange={(visible) => setVisibility(id, visible)}
+                        onUnreadChange={(value) => setUnread(id, value)}
+                        onNavigate={(element) => {
+                          ref = element
+                          props.onNavigate(tab, element)
+                        }}
+                        onClose={() => props.onClose(tab)}
+                      />
+                      <Show when={vertical() && !!visibility[id]}>
+                        <TabChildren
+                          tab={tab}
+                          serverCtx={serverCtx()}
+                          open={!!expanded[id]}
+                          expanded={expanded}
+                          onToggle={(key) => setExpanded(key, !expanded[key])}
+                          onOpen={(child) => {
+                            tabs.rememberSessionRoute(tab, child.id, child.parentID)
+                            props.onNavigate(tab)
+                          }}
+                        />
+                      </Show>
+                    </>
                   )
                 }
 
@@ -619,5 +653,75 @@ export function TitlebarTabStrip(props: {
         />
       </Show>
     </div>
+  )
+}
+
+/** Direct subagent sessions of a session, oldest first. The client's family index is keyed by the root. */
+function subagentSessions(ctx: ServerCtx | undefined, root: string, parentID = root) {
+  if (!ctx) return []
+
+  return ctx.data.session
+    .family(root)
+    .flatMap((id) => {
+      const info = ctx.data.session.get(id)
+
+      return info && info.parentID === parentID ? [info] : []
+    })
+    .toSorted((a, b) => a.time.created - b.time.created)
+}
+
+/** The subagent sessions of an open tab, nested under it while the side strip is expanded. */
+function TabChildren(props: {
+  tab: SessionTab
+  serverCtx: ServerCtx | undefined
+  open: boolean
+  expanded: Record<string, boolean>
+  onToggle: (key: string) => void
+  onOpen: (session: SessionInfo) => void
+}) {
+  const language = useLanguage()
+  const roots = createMemo(() => subagentSessions(props.serverCtx, props.tab.sessionId))
+
+  const rows = (list: SessionInfo[], depth: number): JSX.Element => (
+    <For each={list}>
+      {(session) => {
+        const children = createMemo(() => subagentSessions(props.serverCtx, props.tab.sessionId, session.id))
+
+        return (
+          <>
+            <div
+              class="flex w-full min-w-0 items-center gap-1.5"
+              style={{ "padding-inline-start": `${6 + (depth + 1) * 14}px` }}
+            >
+              <Show when={children().length > 0}>
+                <Disclosure
+                  expanded={!!props.expanded[session.id]}
+                  label={language.plural("session.activity.subagents", children().length)}
+                  onToggle={() => props.onToggle(session.id)}
+                />
+              </Show>
+              <button
+                type="button"
+                class="flex h-7 min-w-0 flex-1 items-center rounded-[6px] px-1.5 text-start text-[13px] leading-4 text-v2-text-text-faint hover:bg-v2-overlay-simple-overlay-hover focus-visible:outline-none focus-visible:bg-v2-overlay-simple-overlay-hover"
+                onClick={() => props.onOpen(session)}
+              >
+                <span dir="auto" class="min-w-0 truncate">
+                  {sessionTabTitle(session.title, language.t("session.tab.session"))}
+                </span>
+              </button>
+            </div>
+            <Show when={props.expanded[session.id]}>{rows(children(), depth + 1)}</Show>
+          </>
+        )
+      }}
+    </For>
+  )
+
+  return (
+    <Show when={props.open && roots().length > 0}>
+      <div data-slot="vertical-tab-children" class="flex flex-col gap-px pb-1">
+        {rows(roots(), 0)}
+      </div>
+    </Show>
   )
 }

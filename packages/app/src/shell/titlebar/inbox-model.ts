@@ -10,7 +10,6 @@ import { useLayout } from "@/shell/state/layout"
 import { useTabs } from "@/shell/tabs/tabs"
 import { sessionBusy, sessionRequests } from "@/shell/layout/project-avatar-state"
 import { pathKey } from "@/workspaces/path-key"
-import { parseHomeSessionIndex } from "@/home/sessions/index"
 import { sessionFormRequest, sessionPermissionRequest, sessionTreeIDs } from "@/session/requests/session-request-tree"
 import { notifySessionTabsRemoved } from "./session-events"
 import { errorMessage } from "@/shell/layout/helpers"
@@ -76,16 +75,16 @@ export function createSessionInbox(options: { archived?: boolean } = {}) {
   })
 
   // Keep this cache separate from Home's paginated index so changing interface modes cannot reuse a partial index.
-  // One page of the newest root sessions: what needs a person is recent, and paging the whole history first made the
-  // first paint wait on every session the server has.
+  // One page of the newest sessions: what needs a person is recent, and paging the whole history first made the
+  // first paint wait on every session the server has. Child sessions come back too, so a row can list its subagents.
   const queries = useQueries(() => ({
     queries: connections().map((item) => ({
       queryKey: ["inbox-sessions", item.conn] as const,
       enabled: item.ctx.sdk.connection.status() === "connected",
       queryFn: ({ signal }: { signal: AbortSignal }) =>
         item.ctx.sdk.api.session
-          .list({ limit: INDEX_LIMIT, order: "desc", parentID: null }, { signal })
-          .then((response) => parseHomeSessionIndex(response.data)),
+          .list({ limit: INDEX_LIMIT, order: "desc" }, { signal })
+          .then((response) => response.data.filter((session) => session.time.archived === undefined)),
       retry: false,
       staleTime: 30_000,
       refetchOnMount: true,
@@ -132,7 +131,7 @@ export function createSessionInbox(options: { archived?: boolean } = {}) {
 
           if (requests.form) return "input"
 
-          if (busyRoots.has(session.id)) return "working"
+          if (busyRoots.has(session.id) || sessionBusy(data, session.id)) return "working"
 
           if (!notification.unread(session.id, session)) return "ready"
 
@@ -148,7 +147,7 @@ export function createSessionInbox(options: { archived?: boolean } = {}) {
           ].map((session) => [session.id, session] as const),
         )
 
-        return data.session.apply([...sessions.values()].filter((session) => !session.parentID)).map(
+        return data.session.apply([...sessions.values()]).map(
           (session): InboxEntry => ({
             key: `${server}\0${session.id}`,
             conn: item.conn,
@@ -196,6 +195,12 @@ export function createSessionInbox(options: { archived?: boolean } = {}) {
 
   // Rows are keyed by stable strings so live session updates do not remount them.
   const byKey = createMemo(() => new Map(entries().map((entry) => [entry.key, entry])))
+
+  // Direct subagent sessions of a row, oldest first so the tree reads in the order they ran.
+  const children = (entry: InboxEntry) =>
+    entries()
+      .filter((item) => item.server === entry.server && item.session.parentID === entry.session.id)
+      .toSorted((a, b) => a.session.time.created - b.session.time.created)
 
   const selected = (entry: InboxEntry) => {
     const route = layout.route()
@@ -254,7 +259,14 @@ export function createSessionInbox(options: { archived?: boolean } = {}) {
       if (isSessionNotFoundError(error)) forget(entry.conn, entry.session.id)
     })
     void startTransition(() => {
-      tabs.select(tabs.addSessionTab({ server: entry.server, sessionId: entry.session.id }))
+      // A subagent opens inside its root's tab, the way every other link to a child session does.
+      const root = entry.session.parentID ? entry.ctx.data.session.root(entry.session.id) : entry.session.id
+      const tab = tabs.addSessionTab({ server: entry.server, sessionId: root })
+
+      if (entry.session.parentID && tab.type === "session")
+        tabs.rememberSessionRoute(tab, entry.session.id, entry.session.parentID)
+
+      tabs.select(tab)
       entry.ctx.data.session.remember(entry.session)
       entry.ctx.projects.touch(directory)
     })
@@ -291,6 +303,7 @@ export function createSessionInbox(options: { archived?: boolean } = {}) {
     /** The first load has not settled: lists would still move or claim nothing needs you. */
     loading: () => !settled(),
     byKey,
+    children,
     selected,
     open,
     loadBranches,

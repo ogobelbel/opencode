@@ -15,6 +15,7 @@ import { SessionTabAvatarView } from "@/shell/layout/session-tab-avatar"
 import type { SessionInfo } from "@opencode/client/promise"
 import { sessionTabTitle } from "./tab-title"
 import { TabPreviewPopover } from "./tab-popover"
+import { Disclosure } from "./disclosure"
 import "./tab-nav.css"
 
 // MouseEvent.button uses 1 for the middle/wheel button.
@@ -40,6 +41,10 @@ export function TabNavItem(props: {
   dragging?: boolean
   pressed?: boolean
   hidden?: boolean
+  /** Direct subagent sessions of this tab, shown in the vertical strip only. */
+  childCount?: number
+  expanded?: boolean
+  onToggleChildren?: () => void
   orientation?: "horizontal" | "vertical"
 }) {
   const language = useLanguage()
@@ -268,6 +273,13 @@ export function TabNavItem(props: {
     >
       <Show when={promptPulse()} keyed>
         <span data-slot="tab-prompt-pulse" aria-hidden="true" onAnimationEnd={() => setPromptPulse(0)} />
+      </Show>
+      <Show when={props.orientation === "vertical" && props.childCount}>
+        <Disclosure
+          expanded={!!props.expanded}
+          label={language.plural("session.activity.subagents", props.childCount ?? 0)}
+          onToggle={() => props.onToggleChildren?.()}
+        />
       </Show>
       <Menu.Context.Trigger
         as="a"

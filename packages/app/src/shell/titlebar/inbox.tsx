@@ -1,6 +1,7 @@
 import { Schema } from "effect"
 import { Persistence } from "@/runtime/persistence/schema"
 import { createEffect, createMemo, For, Show, type JSX } from "solid-js"
+import { createStore } from "solid-js/store"
 import { Button } from "@opencode/ui/button"
 import { useDialog } from "@opencode/ui/context/dialog"
 import { Dialog, DialogFooter, DialogHeader, DialogTitleGroup } from "@opencode/ui/dialog"
@@ -16,6 +17,7 @@ import { SessionTabAvatarView } from "@/shell/layout/session-tab-avatar"
 import { sessionTabTitle } from "./tab-title"
 import { sessionTitle } from "@/session/title"
 import { createSessionInbox, inboxArchived, inboxBusy, type InboxEntry, type InboxStatus } from "./inbox-model"
+import { Disclosure } from "./disclosure"
 
 // `since` is when the inbox was first used; Recent only lists sessions that finished a run after it.
 const InboxState = Persistence.struct({
@@ -33,8 +35,13 @@ export function SidebarInbox() {
     workingExpanded: true,
   })
 
+  // Which rows show their subagent sessions. Kept in memory: the tree follows the work, not the layout.
+  const [expanded, setExpanded] = createStore<Record<string, boolean>>({})
+
   const sections = createMemo(() => {
-    const list = inbox.entries()
+    // Child sessions only ever render nested under their root, never in a section of their own.
+    const list = inbox.entries().filter((entry) => !entry.session.parentID)
+
     // The most recently finished session comes first.
     const finished = list
       .filter((entry) => {
@@ -77,6 +84,7 @@ export function SidebarInbox() {
       await inbox.remove(props.entry)
       dialog.close()
     }
+
     return (
       <Dialog fit>
         <DialogHeader hideClose>
@@ -99,24 +107,31 @@ export function SidebarInbox() {
     )
   }
 
-  const rows = (list: InboxEntry[]) => (
+  const rows = (list: InboxEntry[], depth = 0) => (
     <For each={list.map((entry) => entry.key)}>
       {(key) => (
         <Show when={inbox.byKey().get(key)}>
           {(entry) => (
-            <InboxRow
-              entry={entry()}
-              selected={inbox.selected(entry())}
-              now={inbox.now()}
-              branchLoading={inbox.branchLoading(entry())}
-              branch={inbox.branch(entry())}
-              worktree={inbox.inWorktree(entry())}
-              archived={inboxArchived(entry())}
-              onOpen={() => inbox.open(entry())}
-              onArchive={() => void inbox.archive(entry())}
-              onUnarchive={() => void inbox.unarchive(entry())}
-              onDelete={() => dialog.show(() => <DeleteDialog entry={entry()} />)}
-            />
+            <>
+              <InboxRow
+                entry={entry()}
+                depth={depth}
+                childCount={inbox.children(entry()).length}
+                expanded={!!expanded[entry().key]}
+                onToggle={() => setExpanded(entry().key, !expanded[entry().key])}
+                selected={inbox.selected(entry())}
+                now={inbox.now()}
+                branchLoading={inbox.branchLoading(entry())}
+                branch={inbox.branch(entry())}
+                worktree={inbox.inWorktree(entry())}
+                archived={inboxArchived(entry())}
+                onOpen={() => inbox.open(entry())}
+                onArchive={() => void inbox.archive(entry())}
+                onUnarchive={() => void inbox.unarchive(entry())}
+                onDelete={() => dialog.show(() => <DeleteDialog entry={entry()} />)}
+              />
+              <Show when={expanded[entry().key]}>{rows(inbox.children(entry()), depth + 1)}</Show>
+            </>
           )}
         </Show>
       )}
@@ -223,6 +238,10 @@ function SectionHeader(props: { label: string; count?: number; expanded?: boolea
 
 function InboxRow(props: {
   entry: InboxEntry
+  depth: number
+  childCount: number
+  expanded: boolean
+  onToggle: () => void
   selected: boolean
   now: number
   branchLoading: boolean
@@ -276,6 +295,7 @@ function InboxRow(props: {
         data-status={status()}
         data-state={props.selected ? "active" : undefined}
         class="group flex w-full shrink-0 flex-col gap-0.5 rounded-[6px] px-1.5 py-1.5 text-start hover:bg-v2-overlay-simple-overlay-hover focus-visible:outline-none focus-visible:bg-v2-overlay-simple-overlay-hover data-[state=active]:bg-v2-background-bg-layer-02"
+        style={{ "padding-inline-start": `${6 + props.depth * 14}px` }}
         classList={{
           "transition-opacity hover:opacity-100 focus-visible:opacity-100": !props.selected,
           "opacity-70": status() === "working" && !props.selected,
@@ -284,16 +304,25 @@ function InboxRow(props: {
         onClick={props.onOpen}
       >
         <span class="flex h-4 w-full min-w-0 items-center gap-1.5 text-[12px] leading-4 text-v2-text-text-faint">
-          <span class="flex size-4 shrink-0 items-center justify-center">
-            <SessionTabAvatarView
-              project={project()}
-              directory={props.entry.session.location.directory}
-              unread={false}
+          <Show when={props.childCount > 0}>
+            <Disclosure
+              expanded={props.expanded}
+              label={language.plural("session.activity.subagents", props.childCount)}
+              onToggle={props.onToggle}
             />
-          </span>
-          <span class="min-w-0 truncate">
-            {displayName(project() ?? { worktree: props.entry.session.location.directory })}
-          </span>
+          </Show>
+          <Show when={props.depth === 0}>
+            <span class="flex size-4 shrink-0 items-center justify-center">
+              <SessionTabAvatarView
+                project={project()}
+                directory={props.entry.session.location.directory}
+                unread={false}
+              />
+            </span>
+            <span class="min-w-0 truncate">
+              {displayName(project() ?? { worktree: props.entry.session.location.directory })}
+            </span>
+          </Show>
           <span class="ms-auto shrink-0 tabular-nums" role={status() === "ready" ? undefined : "status"}>
             <Show when={status() !== "ready"} fallback={age()}>
               <span
@@ -306,6 +335,7 @@ function InboxRow(props: {
               >
                 <Show
                   when={status() === "working"}
+                  // SAFETY: `ready` is the only status this branch excludes, so the key is a real status.
                   fallback={language.t(`sidebar.inbox.status.${status() as Exclude<InboxStatus, "ready">}`)}
                 >
                   {/* Announce only the status: the ticking duration would be re-read every second. */}
@@ -333,7 +363,7 @@ function InboxRow(props: {
         >
           {sessionTabTitle(props.entry.session.title, language.t("session.tab.session"))}
         </span>
-        <Show when={props.branchLoading || props.branch || props.worktree || tag()}>
+        <Show when={props.depth === 0 && (props.branchLoading || props.branch || props.worktree || tag())}>
           <span class="flex h-4 w-full min-w-0 items-center gap-1 text-[12px] leading-4 text-v2-text-text-faint">
             <Show when={props.branchLoading}>
               <span
