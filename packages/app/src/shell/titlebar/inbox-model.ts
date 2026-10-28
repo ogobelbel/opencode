@@ -24,8 +24,44 @@ const BRANCH_BATCH = 4
 // Root sessions fetched per server.
 const INDEX_LIMIT = 200
 
+// Rows the server returns per page of the inbox index.
+const INDEX_PAGE = 200
+
 // The index excludes archived sessions, so a view that lists them loads the newest archived ones separately.
 const ARCHIVED_LIMIT = 50
+
+/**
+ * The newest root sessions with their children. Children ride along in the same index, so page until enough roots
+ * arrive instead of letting a busy family push older sessions out of a single page.
+ */
+async function loadInboxIndex(
+  list: (
+    input: { limit: number; order: "desc"; cursor?: string },
+    options: { signal?: AbortSignal },
+  ) => Promise<{ data: SessionInfo[]; cursor: { next?: string | null } }>,
+  signal?: AbortSignal,
+) {
+  const sessions = new Map<string, SessionInfo>()
+  let roots = 0
+  let cursor: string | undefined
+
+  for (;;) {
+    const response = await list({ limit: INDEX_PAGE, order: "desc", cursor }, { signal })
+    const next = response.cursor.next
+
+    response.data.forEach((session) => {
+      sessions.set(session.id, session)
+
+      if (!session.parentID) roots++
+    })
+
+    if (roots >= INDEX_LIMIT || response.data.length < INDEX_PAGE || !next) break
+
+    cursor = next
+  }
+
+  return [...sessions.values()].filter((session) => session.time.archived === undefined)
+}
 
 export type InboxStatus = "approval" | "input" | "working" | "failed" | "done" | "ready"
 
@@ -82,9 +118,7 @@ export function createSessionInbox(options: { archived?: boolean } = {}) {
       queryKey: ["inbox-sessions", item.conn] as const,
       enabled: item.ctx.sdk.connection.status() === "connected",
       queryFn: ({ signal }: { signal: AbortSignal }) =>
-        item.ctx.sdk.api.session
-          .list({ limit: INDEX_LIMIT, order: "desc" }, { signal })
-          .then((response) => response.data.filter((session) => session.time.archived === undefined)),
+        loadInboxIndex((input, options) => item.ctx.sdk.api.session.list(input, options), signal),
       retry: false,
       staleTime: 30_000,
       refetchOnMount: true,
