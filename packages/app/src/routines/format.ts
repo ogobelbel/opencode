@@ -1,4 +1,4 @@
-import type { RoutineModel, RoutineRunStatus } from "./types"
+import type { RoutineModel, RoutineRunStatus } from "@opencode/client/promise"
 
 export function routineModelLabel(model: RoutineModel) {
   const base = `${model.providerID}/${model.modelID}`
@@ -6,13 +6,13 @@ export function routineModelLabel(model: RoutineModel) {
   return model.variant ? `${base} · ${model.variant}` : base
 }
 
-export function formatDateTime(locale: string, value: string | undefined) {
+export function formatDateTime(locale: string, value: number | undefined) {
   if (!value) return undefined
 
   return new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" }).format(new Date(value))
 }
 
-export function formatTime(locale: string, value: string | undefined) {
+export function formatTime(locale: string, value: number | undefined) {
   if (!value) return undefined
 
   return new Intl.DateTimeFormat(locale, { timeStyle: "short" }).format(new Date(value))

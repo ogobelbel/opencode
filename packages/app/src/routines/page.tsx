@@ -1,23 +1,40 @@
+import type { ExperimentalRoutineCreateInput, RoutineInfo, RoutineModel, RoutineRun, RoutineRunStatus } from "@opencode/client/promise"
 import { Badge } from "@opencode/ui/badge"
 import { Button } from "@opencode/ui/button"
 import { Icon } from "@opencode/ui/icon"
+import { Loader } from "@opencode/ui/loader"
 import { Switch } from "@opencode/ui/switch"
-import { For, Show } from "solid-js"
+import { createEffect, For, on, onCleanup, onMount, Show } from "solid-js"
 import { createStore } from "solid-js/store"
 import { useLanguage } from "@/runtime/i18n/language"
-import { useGlobal } from "@/runtime/server/runtime"
+import { formatServerError } from "@/runtime/server/errors"
 import { ServerConnection } from "@/runtime/server/registry"
+import { useGlobal, type ServerCtx } from "@/runtime/server/runtime"
 import { sessionHref } from "@/shell/routes/session"
-import { RoutineEditor } from "./editor"
-import { demoProjects, demoRoutines, demoRuns } from "./fixtures"
+import { showToast } from "@/shell/notifications/toast"
+import { RoutineEditor, type RoutineProject } from "./editor"
 import { formatDateTime, formatTime, routineModelLabel, runStatusClass } from "./format"
-import type { Routine, RoutineRun, RoutineRunStatus } from "./types"
+
+const RUN_LIMIT = 20
+
+const REFRESH_INTERVAL = 10_000
+
+type RoutineEntry = {
+  key: string
+  server: ServerConnection.Any
+  info: RoutineInfo
+}
+
+type RunState = "loading" | "ready" | "error"
 
 type Store = {
-  routines: Routine[]
-  runs: RoutineRun[]
-  editor: { open: boolean; routine?: Routine }
+  status: "loading" | "ready" | "error"
+  error?: string
+  routines: RoutineEntry[]
+  runs: Record<string, RoutineRun[]>
+  runsStatus: Record<string, RunState>
   expanded: Record<string, boolean>
+  editor: { open: boolean; entry?: RoutineEntry; server?: ServerConnection.Any }
 }
 
 const runStatusKeys = {
@@ -29,110 +46,231 @@ const runStatusKeys = {
   skipped: "routines.run.status.skipped",
 } as const satisfies Record<RoutineRunStatus, string>
 
-const cloneRoutine = (routine: Routine): Routine => ({
-  ...routine,
-  when: { ...routine.when },
-  model: { ...routine.model },
-  tags: [...routine.tags],
-  time: { ...routine.time },
-})
-
-const cloneRun = (run: RoutineRun): RoutineRun => ({
-  ...run,
-  diff: run.diff ? { ...run.diff } : undefined,
-  time: { ...run.time },
-})
+const emptyModel: RoutineModel = { providerID: "", modelID: "" }
 
 export function RoutinesPage() {
   const language = useLanguage()
   const global = useGlobal()
 
   const [store, setStore] = createStore<Store>({
-    routines: demoRoutines.map(cloneRoutine),
-    runs: demoRuns.map(cloneRun),
-    editor: { open: false },
+    status: "loading",
+    routines: [],
+    runs: {},
+    runsStatus: {},
     expanded: {},
+    editor: { open: false },
   })
 
-  const serverKey = () => {
-    const conn = global.servers.list()[0]
+  const connections = () =>
+    global.servers.list().filter((conn) => {
+      if (conn.type === "plugin" && conn.state !== "ready") return false
 
-    return conn ? ServerConnection.key(conn) : undefined
-  }
-
-  const runsFor = (routineID: string) =>
-    store.runs
-      .filter((run) => run.routineID === routineID)
-      .toSorted((a, b) => Date.parse(b.time.created) - Date.parse(a.time.created))
-
-  const editorKey = () => (store.editor.open ? (store.editor.routine?.id ?? "new") : undefined)
-
-  const openNew = () => setStore("editor", { open: true, routine: undefined })
-
-  const openEdit = (routine: Routine) => setStore("editor", { open: true, routine })
-
-  const save = (routine: Routine) => {
-    const index = store.routines.findIndex((item) => item.id === routine.id)
-
-    if (index === -1) setStore("routines", (items) => [...items, routine])
-    else setStore("routines", index, routine)
-
-    setStore("editor", { open: false, routine: undefined })
-  }
-
-  const toggle = (routine: Routine, enabled: boolean) => {
-    const index = store.routines.findIndex((item) => item.id === routine.id)
-
-    if (index === -1) return
-    setStore("routines", index, {
-      ...routine,
-      enabled,
-      time: { ...routine.time, updated: new Date().toISOString() },
+      return global.servers.health[ServerConnection.key(conn)]?.healthy !== false
     })
+
+  const routineKey = (server: ServerConnection.Any, routineID: string) =>
+    `${ServerConnection.key(server)}:${routineID}`
+
+  const loadRuns = async (entry: RoutineEntry, quiet = false) => {
+    if (!quiet) setStore("runsStatus", entry.key, "loading")
+
+    try {
+      const runs = await global.ensureServerCtx(entry.server).sdk.api.experimental.routine.runs({
+        routineID: entry.info.id,
+        limit: RUN_LIMIT,
+      })
+
+      setStore("runs", entry.key, runs)
+      setStore("runsStatus", entry.key, "ready")
+    } catch {
+      // A failed poll keeps the runs already on screen, but a history with nothing to show reports the failure.
+      if (!quiet || store.runsStatus[entry.key] === undefined) setStore("runsStatus", entry.key, "error")
+    }
   }
 
-  // Stage 1 is UI only: "Run now" records a queued run locally instead of asking a scheduler to start one.
-  const runNow = (routine: Routine) => {
-    const index = store.routines.findIndex((item) => item.id === routine.id)
+  const loadRoutines = async (quiet: boolean) => {
+    const list = connections()
 
-    if (index === -1) return
-    const now = new Date().toISOString()
+    if (!quiet) setStore({ status: "loading", error: undefined })
 
-    setStore("routines", index, { ...routine, lastRunAt: now, time: { ...routine.time, updated: now } })
-    setStore("runs", (runs) => [
-      {
-        id: `run_${crypto.randomUUID()}`,
-        routineID: routine.id,
-        status: "queued" as const,
-        time: { created: now },
-      },
-      ...runs,
-    ])
-    setStore("expanded", routine.id, true)
+    try {
+      const settled = await Promise.allSettled(
+        list.map(async (server) => {
+          const routines = await global.ensureServerCtx(server).sdk.api.experimental.routine.list()
+
+          return routines.map((info) => ({ key: routineKey(server, info.id), server, info }) satisfies RoutineEntry)
+        }),
+      )
+
+      if (list.length > 0 && settled.every((result) => result.status === "rejected")) {
+        throw settled.find((result) => result.status === "rejected")!.reason
+      }
+
+      const entries = settled.flatMap((result) => (result.status === "fulfilled" ? result.value : []))
+
+      setStore({ status: "ready", error: undefined, routines: entries })
+
+      return entries
+    } catch (error) {
+      if (!quiet) setStore({ status: "error", error: formatServerError(error, language.t) })
+
+      return undefined
+    }
   }
 
-  const duplicate = (routine: Routine) => {
-    const now = new Date().toISOString()
+  const refreshAll = async (quiet = false) => {
+    const entries = await loadRoutines(quiet)
 
-    setStore("routines", (items) => [
-      ...items,
-      {
-        ...cloneRoutine(routine),
-        id: `routine_${crypto.randomUUID()}`,
-        title: language.t("routines.copySuffix", { title: routine.title }),
-        enabled: false,
-        lastRunAt: undefined,
-        nextRunAt: undefined,
-        lastSessionID: undefined,
-        time: { created: now, updated: now },
-      },
-    ])
+    if (!entries) return
+    await Promise.all(entries.filter((entry) => store.expanded[entry.key]).map((entry) => loadRuns(entry, quiet)))
   }
 
-  const remove = (routine: Routine) => {
-    setStore("routines", (items) => items.filter((item) => item.id !== routine.id))
-    setStore("runs", (runs) => runs.filter((run) => run.routineID !== routine.id))
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters -- a failed request is opaque; the toast formats it
+  const report = (error: unknown) =>
+    showToast({
+      variant: "error",
+      title: language.t("common.requestFailed"),
+      description: formatServerError(error, language.t),
+    })
+
+  const toggle = async (entry: RoutineEntry, enabled: boolean) => {
+    try {
+      await global.ensureServerCtx(entry.server).sdk.api.experimental.routine.update({
+        routineID: entry.info.id,
+        enabled,
+      })
+      await refreshAll(true)
+    } catch (error) {
+      report(error)
+    }
   }
+
+  const runNow = async (entry: RoutineEntry) => {
+    try {
+      await global.ensureServerCtx(entry.server).sdk.api.experimental.routine.run({ routineID: entry.info.id })
+      setStore("expanded", entry.key, true)
+      await refreshAll(true)
+    } catch (error) {
+      report(error)
+    }
+  }
+
+  const duplicate = async (entry: RoutineEntry) => {
+    try {
+      await global.ensureServerCtx(entry.server).sdk.api.experimental.routine.duplicate({
+        routineID: entry.info.id,
+      })
+      await refreshAll(true)
+    } catch (error) {
+      report(error)
+    }
+  }
+
+  const remove = async (entry: RoutineEntry) => {
+    try {
+      await global.ensureServerCtx(entry.server).sdk.api.experimental.routine.delete({ routineID: entry.info.id })
+      await refreshAll(true)
+    } catch (error) {
+      report(error)
+    }
+  }
+
+  const editorServer = () => store.editor.entry?.server ?? store.editor.server
+
+  const editorCtx = () => {
+    const server = editorServer()
+
+    return server ? global.ensureServerCtx(server) : undefined
+  }
+
+  const projectsFor = (ctx: ServerCtx, routine?: RoutineInfo): RoutineProject[] => {
+    const used = ctx.projects.used()
+    const ids = new Set(used.map((project) => project.id))
+
+    const list = [...used, ...ctx.projects.unique().filter((project) => !ids.has(project.id))].map((project) => ({
+      projectID: project.id,
+      directory: project.worktree,
+    }))
+
+    // An existing routine may point at a sandbox the project list does not carry as its own worktree.
+    if (routine && !list.some((project) => project.projectID === routine.projectID))
+      list.unshift({ projectID: routine.projectID, directory: routine.directory })
+
+    return list
+  }
+
+  const defaultModel = (): RoutineModel => {
+    const entry = store.editor.entry
+
+    if (entry) return entry.info.model
+    const key = store.editor.server ? ServerConnection.key(store.editor.server) : undefined
+
+    return store.routines.find((item) => ServerConnection.key(item.server) === key)?.info.model ?? emptyModel
+  }
+
+  const save = async (input: ExperimentalRoutineCreateInput) => {
+    const entry = store.editor.entry
+    const server = editorServer()
+
+    try {
+      if (entry) {
+        await global.ensureServerCtx(entry.server).sdk.api.experimental.routine.update({
+          routineID: entry.info.id,
+          title: input.title,
+          when: input.when,
+          prompt: input.prompt,
+          mode: input.mode,
+          model: input.model,
+          timeoutSeconds: input.timeoutSeconds,
+          maxParallel: input.maxParallel,
+          tags: input.tags,
+        })
+      } else {
+        if (!server) return
+        await global.ensureServerCtx(server).sdk.api.experimental.routine.create(input)
+      }
+
+      setStore("editor", { open: false, entry: undefined, server: undefined })
+      await refreshAll(true)
+    } catch (error) {
+      report(error)
+    }
+  }
+
+  const openNew = () => {
+    const server = connections()[0]
+
+    if (!server) return
+    setStore("editor", { open: true, entry: undefined, server })
+  }
+
+  const openEdit = (entry: RoutineEntry) => setStore("editor", { open: true, entry, server: entry.server })
+
+  const toggleHistory = (entry: RoutineEntry) => {
+    const expanded = !store.expanded[entry.key]
+
+    setStore("expanded", entry.key, expanded)
+
+    if (expanded) void loadRuns(entry)
+  }
+
+  onMount(() => {
+    void refreshAll()
+
+    const timer = setInterval(() => void refreshAll(true), REFRESH_INTERVAL)
+
+    onCleanup(() => clearInterval(timer))
+  })
+
+  createEffect(
+    on(
+      () => connections().map((conn) => ServerConnection.key(conn)).join("\n"),
+      () => void refreshAll(true),
+      { defer: true },
+    ),
+  )
+
+  const editorKey = () => (store.editor.open ? (store.editor.entry?.key ?? "new") : undefined)
 
   return (
     <div
@@ -146,7 +284,7 @@ export function RoutinesPage() {
             {language.t("routines.description")}
           </p>
         </div>
-        <Button variant="contrast" icon="plus" onClick={openNew}>
+        <Button variant="contrast" icon="plus" onClick={openNew} disabled={connections().length === 0}>
           {language.t("routines.action.new")}
         </Button>
       </div>
@@ -155,46 +293,88 @@ export function RoutinesPage() {
         <div class="mx-auto flex w-full max-w-[880px] flex-col gap-3">
           <Show when={editorKey()} keyed>
             {(_key) => (
-              <RoutineEditor
-                routine={store.editor.routine}
-                projects={demoProjects}
-                defaultModel={demoRoutines[0].model}
-                onSave={save}
-                onCancel={() => setStore("editor", { open: false, routine: undefined })}
-              />
+              <Show when={editorServer()} keyed>
+                {(server) => (
+                  <Show when={editorCtx()}>
+                    {(ctx) => (
+                      <RoutineEditor
+                        routine={store.editor.entry?.info}
+                        server={server}
+                        projects={projectsFor(ctx(), store.editor.entry?.info)}
+                        defaultModel={defaultModel()}
+                        onSave={(input) => void save(input)}
+                        onCancel={() => setStore("editor", { open: false, entry: undefined, server: undefined })}
+                      />
+                    )}
+                  </Show>
+                )}
+              </Show>
             )}
           </Show>
 
           <Show
-            when={store.routines.length > 0}
+            when={store.status !== "error"}
             fallback={
               <div class="flex flex-col items-center gap-2 py-16 text-center">
-                <Icon name="outline-rotate-clockwise" class="text-v2-icon-icon-faint" />
+                <Icon name="outline-hexagonal-warning" class="text-v2-icon-icon-faint" />
                 <p class="text-[13px] font-medium leading-[var(--line-height-compact)] text-v2-text-text-base">
-                  {language.t("routines.empty.title")}
+                  {language.t("routines.error.title")}
                 </p>
-                <p class="text-[13px] leading-[var(--line-height-compact)] text-v2-text-text-muted">
-                  {language.t("routines.empty.description")}
-                </p>
+                <Show when={store.error}>
+                  {(error) => (
+                    <p class="max-w-[560px] text-[13px] leading-[var(--line-height-compact)] text-v2-text-text-muted">
+                      {error()}
+                    </p>
+                  )}
+                </Show>
+                <Button variant="outline" onClick={() => void refreshAll()}>
+                  {language.t("common.retry")}
+                </Button>
               </div>
             }
           >
-            <For each={store.routines}>
-              {(routine) => (
-                <RoutineCard
-                  routine={routine}
-                  runs={runsFor(routine.id)}
-                  expanded={!!store.expanded[routine.id]}
-                  serverKey={serverKey()}
-                  onToggle={(enabled) => toggle(routine, enabled)}
-                  onRunNow={() => runNow(routine)}
-                  onToggleHistory={() => setStore("expanded", routine.id, (value) => !value)}
-                  onEdit={() => openEdit(routine)}
-                  onDuplicate={() => duplicate(routine)}
-                  onDelete={() => remove(routine)}
-                />
-              )}
-            </For>
+            <Show
+              when={store.status !== "loading"}
+              fallback={
+                <div class="flex justify-center py-16">
+                  <Loader class="text-v2-text-text-faint" />
+                </div>
+              }
+            >
+              <Show
+                when={store.routines.length > 0}
+                fallback={
+                  <div class="flex flex-col items-center gap-2 py-16 text-center">
+                    <Icon name="outline-rotate-clockwise" class="text-v2-icon-icon-faint" />
+                    <p class="text-[13px] font-medium leading-[var(--line-height-compact)] text-v2-text-text-base">
+                      {language.t("routines.empty.title")}
+                    </p>
+                    <p class="text-[13px] leading-[var(--line-height-compact)] text-v2-text-text-muted">
+                      {language.t("routines.empty.description")}
+                    </p>
+                  </div>
+                }
+              >
+                <For each={store.routines}>
+                  {(entry) => (
+                    <RoutineCard
+                      routine={entry.info}
+                      runs={store.runs[entry.key] ?? []}
+                      runsStatus={store.runsStatus[entry.key] ?? "loading"}
+                      expanded={!!store.expanded[entry.key]}
+                      serverKey={ServerConnection.key(entry.server)}
+                      onToggle={(enabled) => void toggle(entry, enabled)}
+                      onRunNow={() => void runNow(entry)}
+                      onToggleHistory={() => toggleHistory(entry)}
+                      onRetryRuns={() => void loadRuns(entry)}
+                      onEdit={() => openEdit(entry)}
+                      onDuplicate={() => void duplicate(entry)}
+                      onDelete={() => void remove(entry)}
+                    />
+                  )}
+                </For>
+              </Show>
+            </Show>
           </Show>
         </div>
       </div>
@@ -203,13 +383,15 @@ export function RoutinesPage() {
 }
 
 function RoutineCard(props: {
-  routine: Routine
+  routine: RoutineInfo
   runs: RoutineRun[]
+  runsStatus: RunState
   expanded: boolean
-  serverKey?: ServerConnection.Key
+  serverKey: ServerConnection.Key
   onToggle(enabled: boolean): void
   onRunNow(): void
   onToggleHistory(): void
+  onRetryRuns(): void
   onEdit(): void
   onDuplicate(): void
   onDelete(): void
@@ -262,15 +444,11 @@ function RoutineCard(props: {
       <div class="grid gap-x-6 gap-y-1 text-[13px] leading-[var(--line-height-compact)] sm:grid-cols-2">
         <div class="flex min-w-0 gap-1.5">
           <span class="shrink-0 text-v2-text-text-muted">{language.t("routines.lastRun.label")}</span>
-          <span class="truncate text-v2-text-text-base">
-            {lastRun() ?? language.t("routines.never")}
-          </span>
+          <span class="truncate text-v2-text-text-base">{lastRun() ?? language.t("routines.never")}</span>
         </div>
         <div class="flex min-w-0 gap-1.5">
           <span class="shrink-0 text-v2-text-text-muted">{language.t("routines.nextRun.label")}</span>
-          <span class="truncate text-v2-text-text-base">
-            {nextRun() ?? language.t("routines.notScheduled")}
-          </span>
+          <span class="truncate text-v2-text-text-base">{nextRun() ?? language.t("routines.notScheduled")}</span>
         </div>
       </div>
 
@@ -298,14 +476,37 @@ function RoutineCard(props: {
             {language.t("routines.history.title")}
           </div>
           <Show
-            when={props.runs.length > 0}
+            when={props.runsStatus !== "loading"}
             fallback={
-              <p class="py-2 text-[13px] leading-[var(--line-height-compact)] text-v2-text-text-muted">
-                {language.t("routines.history.empty")}
-              </p>
+              <div class="flex justify-center py-2">
+                <Loader class="size-3.5 text-v2-text-text-faint" />
+              </div>
             }
           >
-            <For each={props.runs}>{(run) => <RunRow run={run} serverKey={props.serverKey} />}</For>
+            <Show
+              when={props.runsStatus !== "error"}
+              fallback={
+                <div class="flex items-center justify-between gap-2 py-2">
+                  <p class="text-[13px] leading-[var(--line-height-compact)] text-v2-state-fg-danger">
+                    {language.t("routines.history.error")}
+                  </p>
+                  <Button variant="ghost" size="small" onClick={props.onRetryRuns}>
+                    {language.t("common.retry")}
+                  </Button>
+                </div>
+              }
+            >
+              <Show
+                when={props.runs.length > 0}
+                fallback={
+                  <p class="py-2 text-[13px] leading-[var(--line-height-compact)] text-v2-text-text-muted">
+                    {language.t("routines.history.empty")}
+                  </p>
+                }
+              >
+                <For each={props.runs}>{(run) => <RunRow run={run} serverKey={props.serverKey} />}</For>
+              </Show>
+            </Show>
           </Show>
         </div>
       </Show>
@@ -313,7 +514,7 @@ function RoutineCard(props: {
   )
 }
 
-function RunRow(props: { run: RoutineRun; serverKey?: ServerConnection.Key }) {
+function RunRow(props: { run: RoutineRun; serverKey: ServerConnection.Key }) {
   const language = useLanguage()
   const created = () => formatDateTime(language.locale(), props.run.time.created)
   const finished = () => formatTime(language.locale(), props.run.time.completed)
@@ -327,30 +528,25 @@ function RunRow(props: { run: RoutineRun; serverKey?: ServerConnection.Key }) {
       <div class="flex min-w-0 flex-col gap-0.5">
         <span class="truncate text-v2-text-text-base">{created()}</span>
         <Show when={props.run.error}>
-          <span class="truncate text-v2-state-fg-danger">{props.run.error}</span>
+          {(error) => <span class="truncate text-v2-state-fg-danger">{error()}</span>}
         </Show>
         <Show when={props.run.branch}>
-          {(branch) => <code class="truncate font-mono text-[13px] leading-[var(--line-height-compact)] text-v2-text-text-muted">{branch()}</code>}
+          {(branch) => (
+            <code class="truncate font-mono text-[13px] leading-[var(--line-height-compact)] text-v2-text-text-muted">
+              {branch()}
+            </code>
+          )}
         </Show>
       </div>
       <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-v2-text-text-muted sm:justify-end">
         <Show when={props.run.sessionID} fallback={<span>{language.t("routines.run.noSession")}</span>}>
           {(sessionID) => (
-            <Show
-              when={props.serverKey}
-              fallback={
-                <code class="font-mono text-[13px] leading-[var(--line-height-compact)]">{sessionID()}</code>
-              }
+            <a
+              href={sessionHref(props.serverKey, sessionID())}
+              class="truncate text-v2-text-text-accent-hover hover:underline focus-visible:outline focus-visible:outline-2"
             >
-              {(serverKey) => (
-                <a
-                  href={sessionHref(serverKey(), sessionID())}
-                  class="truncate text-v2-text-text-accent-hover hover:underline focus-visible:outline focus-visible:outline-2"
-                >
-                  {sessionID()}
-                </a>
-              )}
-            </Show>
+              {sessionID()}
+            </a>
           )}
         </Show>
         <Show when={props.run.diff}>

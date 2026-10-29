@@ -1,12 +1,14 @@
+import type { ExperimentalRoutineCreateInput, RoutineInfo, RoutineMode, RoutineModel } from "@opencode/client/promise"
 import { Button } from "@opencode/ui/button"
 import { Select } from "@opencode/ui/select"
 import { TextInput } from "@opencode/ui/text-input"
 import { Textarea } from "@opencode/ui/textarea"
 import { createStore } from "solid-js/store"
 import { useLanguage } from "@/runtime/i18n/language"
-import type { RoutineProject } from "./fixtures"
+import type { ServerConnection } from "@/runtime/server/registry"
 import { RoutineModelPicker } from "./model-picker"
-import type { Routine, RoutineMode, RoutineModel } from "./types"
+
+export type RoutineProject = { projectID: string; directory: string }
 
 type EditorState = {
   title: string
@@ -34,10 +36,11 @@ const optionalNumber = (value: string) => {
 }
 
 export function RoutineEditor(props: {
-  routine?: Routine
+  routine?: RoutineInfo
+  server: ServerConnection.Any
   projects: RoutineProject[]
   defaultModel: RoutineModel
-  onSave(routine: Routine): void
+  onSave(input: ExperimentalRoutineCreateInput): void
   onCancel(): void
 }) {
   const language = useLanguage()
@@ -64,13 +67,10 @@ export function RoutineEditor(props: {
     event.preventDefault()
     const title = form.title.trim()
 
-    if (!title) return
-    const now = new Date().toISOString()
+    if (!title || !form.directory || !form.model.providerID || !form.model.modelID) return
 
     props.onSave({
-      id: props.routine?.id ?? `routine_${crypto.randomUUID()}`,
       directory: form.directory,
-      projectID: form.projectID,
       title,
       enabled: props.routine?.enabled ?? true,
       when: { cron: form.cron.trim(), tz: form.tz.trim() },
@@ -83,10 +83,6 @@ export function RoutineEditor(props: {
         .split(",")
         .map((tag) => tag.trim())
         .filter(Boolean),
-      lastRunAt: props.routine?.lastRunAt,
-      nextRunAt: props.routine?.nextRunAt,
-      lastSessionID: props.routine?.lastSessionID,
-      time: { created: props.routine?.time.created ?? now, updated: now },
     })
   }
 
@@ -143,6 +139,7 @@ export function RoutineEditor(props: {
               setForm({ projectID: item.projectID, directory: item.directory })
             }}
             aria-label={language.t("routines.editor.directory")}
+            disabled={!!props.routine}
           />
         </label>
 
@@ -192,6 +189,7 @@ export function RoutineEditor(props: {
             {language.t("routines.editor.model")}
           </span>
           <RoutineModelPicker
+            server={props.server}
             directory={form.directory}
             model={form.model}
             onChange={(model) => setForm("model", model)}
@@ -258,7 +256,11 @@ export function RoutineEditor(props: {
         <Button type="button" variant="ghost" onClick={props.onCancel}>
           {language.t("routines.editor.cancel")}
         </Button>
-        <Button type="submit" variant="contrast" disabled={!form.title.trim()}>
+        <Button
+          type="submit"
+          variant="contrast"
+          disabled={!form.title.trim() || !form.directory || !form.model.providerID || !form.model.modelID}
+        >
           {language.t("routines.editor.save")}
         </Button>
       </div>
