@@ -4,7 +4,7 @@ import { useNavigate, useParams } from "@solidjs/router"
 import { useQuery } from "@tanstack/solid-query"
 import { createMemo, onCleanup, type ParentProps } from "solid-js"
 import { useProviders } from "@/providers/catalog/providers"
-import { LocalProvider } from "@/providers/models/selection"
+import { LocalProvider, useLocal } from "@/providers/models/selection"
 import { DialogSelectModelNext } from "@/providers/models/select-dialog-next"
 import { useDialog } from "@opencode/ui/context/dialog"
 import { ModelPickerProvider, type ModelPicker } from "@opencode/ui/context/model-picker"
@@ -32,12 +32,7 @@ export function SessionUIProvider(
   const tabs = useTabs()
   const language = useLanguage()
   const settings = useSettings()
-  const dialog = useDialog()
   const directory = () => props.directory
-
-  // The transcript's subagent card picks a model for that child without touching the composer's own selection.
-  const openModelPicker: ModelPicker = (input) =>
-    dialog.show(() => <DialogSelectModelNext current={input.current} onPick={input.onPick} />)
 
   const readImage = createMemo<ReadMarkdownImage>(() => {
     const dir = directory()
@@ -137,7 +132,7 @@ export function SessionUIProvider(
 
   return (
     <LocalProvider>
-      <ModelPickerProvider open={openModelPicker}>
+      <ModelPickerHost>
         <DataProvider
           data={sessionUIData()}
           directory={directory()}
@@ -158,7 +153,23 @@ export function SessionUIProvider(
             {props.children}
           </MarkdownProvider>
         </DataProvider>
-      </ModelPickerProvider>
+      </ModelPickerHost>
     </LocalProvider>
   )
+}
+
+/**
+ * The transcript's subagent card picks a model for that child without touching the composer's own selection. The
+ * dialog lives in the app's dialog layer, so the model state it reads is captured here, inside `LocalProvider`.
+ */
+function ModelPickerHost(props: ParentProps) {
+  const local = useLocal()
+  const dialog = useDialog()
+
+  const open: ModelPicker = (input) =>
+    dialog.show(() => (
+      <DialogSelectModelNext model={local.model} current={input.current} onPick={input.onPick} />
+    ))
+
+  return <ModelPickerProvider open={open}>{props.children}</ModelPickerProvider>
 }
