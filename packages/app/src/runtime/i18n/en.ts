@@ -598,6 +598,8 @@ export const dict = {
   "routines.empty.description": "Create a routine to run an agent on a schedule.",
   "routines.history.title": "Run history",
   "routines.history.empty": "No runs yet.",
+  "routines.history.error": "Couldn't load runs",
+  "routines.error.title": "Couldn't load routines",
   "routines.run.status.queued": "Queued",
   "routines.run.status.running": "Running",
   "routines.run.status.completed": "Completed",

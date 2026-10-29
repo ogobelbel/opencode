@@ -1,3 +1,4 @@
+import type { RoutineModel } from "@opencode/client/promise"
 import { Button } from "@opencode/ui/button"
 import { useDialog } from "@opencode/ui/context/dialog"
 import { Show } from "solid-js"
@@ -6,36 +7,22 @@ import { LocalProvider, useLocal, type ModelSelection } from "@/providers/models
 import { ModelsProvider } from "@/providers/models/models"
 import { useLanguage } from "@/runtime/i18n/language"
 import { ServerProvider } from "@/runtime/server/current"
-import { useGlobal } from "@/runtime/server/runtime"
-import { ServerConnection } from "@/runtime/server/registry"
+import type { ServerConnection } from "@/runtime/server/registry"
 import { LocationProvider } from "@/workspaces/location"
 import { routineModelLabel } from "./format"
-import type { RoutineModel } from "./types"
 
 export function RoutineModelPicker(props: {
+  server: ServerConnection.Any
   directory: string
   model: RoutineModel
   onChange(model: RoutineModel): void
 }) {
   const dialog = useDialog()
   const language = useLanguage()
-  const global = useGlobal()
-
-  const connection = () => {
-    const servers = global.servers.list()
-    const healthy = servers.find((server) => global.servers.health[ServerConnection.key(server)]?.healthy)
-
-    return healthy ?? servers[0]
-  }
 
   const open = () => {
-    const conn = connection()
-
-    // The model picker reads the server's model catalog, so without a server there is nothing to choose from.
-    if (!conn) return
-
     void dialog.show(() => (
-      <ServerProvider conn={conn}>
+      <ServerProvider conn={props.server}>
         <ModelsProvider directory={props.directory}>
           <LocationProvider directory={props.directory}>
             <LocalProvider>
