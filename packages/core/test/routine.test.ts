@@ -6,6 +6,8 @@ import { LayerNode } from "@opencode/util/effect/layer-node"
 import { Database } from "@opencode/core/database/database"
 import { Project } from "@opencode/core/project"
 import { Routine } from "@opencode/core/routine"
+import { Session } from "@opencode/core/session"
+import { Worktree } from "@opencode/core/worktree"
 import { testEffect } from "./lib/effect"
 
 const it = testEffect(
@@ -15,6 +17,17 @@ const it = testEffect(
         resolve: (directory) => Effect.succeed({ id: Project.ID.global, directory, canonical: directory }),
       }),
     ),
+    // These tests exercise the durable queue only; execution needs a real model and git.
+    Session.node.replace(
+      Layer.mock(Session.Service, {
+        revert: {
+          stage: () => Effect.die("unused"),
+          clear: () => Effect.die("unused"),
+          commit: () => Effect.die("unused"),
+        },
+      }),
+    ),
+    Worktree.node.replace(Layer.mock(Worktree.Service, {})),
   ]),
 )
 
@@ -46,6 +59,7 @@ describe("Routine", () => {
         enabled: true,
         mode: "yolo",
         tags: ["ci"],
+        worktree: undefined,
         time: { created: Date.parse("2026-01-01T00:00:00Z") },
       })
       expect(iso(routine.nextRunAt)).toBe("2026-01-01T09:00:00.000Z")
@@ -53,8 +67,8 @@ describe("Routine", () => {
       expect(yield* routines.list({ directory: "/other" })).toEqual([])
       expect(yield* routines.get(routine.id)).toEqual(routine)
 
-      const paused = yield* routines.update(routine.id, { enabled: false, title: "Paused" })
-      expect(paused).toMatchObject({ enabled: false, title: "Paused", nextRunAt: undefined })
+      const paused = yield* routines.update(routine.id, { enabled: false, title: "Paused", worktree: true })
+      expect(paused).toMatchObject({ enabled: false, title: "Paused", nextRunAt: undefined, worktree: true })
 
       const resumed = yield* routines.update(routine.id, { enabled: true })
       expect(iso(resumed.nextRunAt)).toBe("2026-01-01T09:00:00.000Z")
@@ -62,6 +76,7 @@ describe("Routine", () => {
       const copy = yield* routines.duplicate(routine.id)
       expect(copy.id).not.toBe(routine.id)
       expect(copy.title).toBe("Paused (copy)")
+      expect(copy.worktree).toBe(true)
 
       yield* routines.remove(copy.id)
       expect(yield* Effect.flip(routines.get(copy.id))).toMatchObject({ _tag: "Routine.NotFoundError" })

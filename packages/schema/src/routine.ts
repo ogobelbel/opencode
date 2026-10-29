@@ -74,6 +74,8 @@ export const Info = Schema.Struct({
   prompt: Schema.String,
   mode: Mode,
   model: Model,
+  /** Run in a fresh git worktree instead of `directory`. Defaults to false. */
+  worktree: optional(Schema.Boolean),
   timeoutSeconds: optional(PositiveInt),
   maxParallel: optional(PositiveInt).annotate({ description: "Active runs allowed at once. Defaults to 1." }),
   tags: Schema.Array(Schema.String),
@@ -93,6 +95,8 @@ export const Run = Schema.Struct({
   worktreePath: optional(Schema.String),
   branch: optional(Schema.String),
   diff: optional(Diff),
+  /** Text of the last assistant message, truncated for display. */
+  summary: optional(Schema.String),
   time: RunTime,
 }).annotate({ identifier: "Routine.Run" })
 export interface Run extends Schema.Schema.Type<typeof Run> {}
@@ -105,6 +109,7 @@ export const CreateInput = Schema.Struct({
   prompt: Schema.String,
   mode: Mode,
   model: Model,
+  worktree: optional(Schema.Boolean),
   timeoutSeconds: optional(PositiveInt),
   maxParallel: optional(PositiveInt),
   tags: optional(Schema.Array(Schema.String)),
@@ -118,6 +123,7 @@ export const UpdateInput = Schema.Struct({
   prompt: optional(Schema.String),
   mode: optional(Mode),
   model: optional(Model),
+  worktree: optional(Schema.Boolean),
   timeoutSeconds: optional(PositiveInt),
   maxParallel: optional(PositiveInt),
   tags: optional(Schema.Array(Schema.String)),

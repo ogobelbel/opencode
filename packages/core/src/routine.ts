@@ -1,7 +1,7 @@
 export * as Routine from "./routine.js"
 
 import { and, asc, desc, eq, inArray, lte } from "drizzle-orm"
-import { Clock, Context, Cron, DateTime, Effect, Layer, Option, Result, Schema } from "effect"
+import { Cause, Clock, Context, Cron, DateTime, Duration, Effect, Exit, Layer, Option, Result, Schema } from "effect"
 import { Node, makeGlobalNode } from "@opencode/util/effect/app-node"
 import { LayerNode } from "@opencode/util/effect/layer-node"
 import { Routine as RoutineSchema } from "@opencode/schema/routine"
@@ -10,6 +10,10 @@ import { nextCron } from "./cron.js"
 import { Database } from "./database/database.js"
 import { Project } from "./project.js"
 import { AbsolutePath } from "./schema.js"
+import { Session } from "./session.js"
+import { Worktree } from "./worktree.js"
+import { Slug } from "./util/slug.js"
+import { diffStats, modelRef, permissions, summary } from "./routine/execution.js"
 import { RoutineRunTable, RoutineTable } from "./routine/sql.js"
 
 export const ID = RoutineSchema.ID
@@ -77,6 +81,7 @@ type RunRow = typeof RoutineRunTable.$inferSelect
 /** A firing further past its due time than this is dropped instead of catching up. */
 const GRACE = 60 * 60 * 1000
 const DEFAULT_PARALLEL = 1
+const EXECUTOR_INTERVAL = 2_000
 const ACTIVE: readonly RoutineSchema.RunStatus[] = ["queued", "running"]
 
 const optionalTime = (value: number | null) => (value === null ? undefined : value)
@@ -91,6 +96,7 @@ const toInfo = (row: Row): Info => ({
   prompt: row.prompt,
   mode: row.mode,
   model: row.model,
+  worktree: row.worktree ? true : undefined,
   timeoutSeconds: row.timeout_seconds ?? undefined,
   maxParallel: row.max_parallel ?? undefined,
   tags: row.tags,
@@ -109,6 +115,7 @@ const toRun = (row: RunRow): Run => ({
   worktreePath: row.worktree_path ?? undefined,
   branch: row.branch ?? undefined,
   diff: row.diff ?? undefined,
+  summary: row.summary ?? undefined,
   time: {
     created: row.time_created,
     started: optionalTime(row.time_started),
@@ -121,6 +128,8 @@ const layer = Layer.effect(
   Effect.gen(function* () {
     const { db } = yield* Database.Service
     const projects = yield* Project.Service
+    const sessions = yield* Session.Service
+    const worktrees = yield* Worktree.Service
 
     const find = (id: ID) =>
       db
@@ -201,6 +210,157 @@ const layer = Layer.effect(
         .pipe(Effect.orDie, Effect.map(toRun))
     })
 
+    const claim = (id: RunID, now: number) =>
+      db
+        .update(RoutineRunTable)
+        .set({ status: "running", time_started: now })
+        .where(and(eq(RoutineRunTable.id, id), eq(RoutineRunTable.status, "queued")))
+        .returning()
+        .get()
+        .pipe(Effect.orDie)
+
+    /** Terminal writes only apply while the run is still running, so a cancellation always wins. */
+    const finish = (id: RunID, values: Partial<typeof RoutineRunTable.$inferInsert>) =>
+      db
+        .update(RoutineRunTable)
+        .set(values)
+        .where(and(eq(RoutineRunTable.id, id), eq(RoutineRunTable.status, "running")))
+        .returning()
+        .get()
+        .pipe(Effect.orDie)
+
+    const touchRoutine = (run: RunRow, now: number) =>
+      db
+        .update(RoutineTable)
+        .set({
+          last_run_at: now,
+          time_updated: now,
+          ...(run.session_id === null ? {} : { last_session_id: run.session_id }),
+        })
+        .where(eq(RoutineTable.id, run.routine_id))
+        .run()
+        .pipe(Effect.orDie)
+
+    const errorText = (cause: Cause.Cause<unknown>) =>
+      Cause.prettyErrors(cause)
+        .map((error) => error.message)
+        .filter((message) => message.length > 0)
+        .join("\n") || "Routine run failed"
+
+    const execute = Effect.fnUntraced(function* (run: RunRow) {
+      const outcome = yield* Effect.gen(function* () {
+        const routine = yield* find(run.routine_id)
+        const worktree = routine.worktree
+          ? yield* worktrees.create({
+              projectID: Project.ID.make(routine.project_id),
+              name: `routine-${Slug.create()}`,
+            })
+          : undefined
+        yield* db
+          .update(RoutineRunTable)
+          .set({ worktree_path: worktree?.directory ?? null })
+          .where(eq(RoutineRunTable.id, run.id))
+          .run()
+          .pipe(Effect.orDie)
+        const session = yield* sessions.create({
+          location: { directory: AbsolutePath.make(worktree ? worktree.directory : routine.directory) },
+          title: `Routine: ${routine.title}`,
+          model: modelRef(routine.model),
+          permissions: permissions(routine.mode),
+        })
+        yield* db
+          .update(RoutineRunTable)
+          .set({ session_id: session.id })
+          .where(eq(RoutineRunTable.id, run.id))
+          .run()
+          .pipe(Effect.orDie)
+        const current = yield* findRun(run.id)
+        if (current.status !== "running") {
+          yield* sessions.interrupt(session.id)
+          return
+        }
+        yield* sessions.prompt({ sessionID: session.id, text: routine.prompt })
+        const timeout = routine.timeout_seconds
+        yield* timeout === null
+          ? sessions.wait(session.id)
+          : sessions.wait(session.id).pipe(
+              Effect.timeoutOrElse({
+                duration: Duration.seconds(timeout),
+                orElse: () =>
+                  Effect.gen(function* () {
+                    yield* sessions.interrupt(session.id)
+                    return yield* Effect.fail(new Error(`Routine timed out after ${timeout} seconds`))
+                  }),
+              }),
+            )
+        const messages = yield* sessions
+          .messages({ sessionID: session.id, order: "desc", limit: 50 })
+          .pipe(Effect.catchCause(() => Effect.succeed([])))
+        const files = yield* sessions
+          .diff({ sessionID: session.id })
+          .pipe(Effect.catchCause(() => Effect.succeed([])))
+        return {
+          session,
+          worktreePath: worktree?.directory,
+          diff: diffStats(files),
+          summary: summary(messages),
+        }
+      }).pipe(Effect.exit)
+
+      const now = yield* Clock.currentTimeMillis
+      if (Exit.isFailure(outcome)) {
+        const failed = yield* finish(run.id, {
+          status: "failed",
+          error: errorText(outcome.cause),
+          time_completed: now,
+        })
+        if (failed) yield* touchRoutine(failed, now)
+        return
+      }
+      if (outcome.value === undefined) return
+      const completed = yield* finish(run.id, {
+        status: "completed",
+        session_id: outcome.value.session.id,
+        worktree_path: outcome.value.worktreePath ?? null,
+        diff: outcome.value.diff,
+        summary: outcome.value.summary ?? null,
+        time_completed: now,
+      })
+      if (completed) yield* touchRoutine(completed, now)
+    })
+
+    const drain = Effect.fnUntraced(function* (now: number) {
+      const queued = yield* db
+        .select({
+          id: RoutineRunTable.id,
+          routine_id: RoutineRunTable.routine_id,
+          max_parallel: RoutineTable.max_parallel,
+        })
+        .from(RoutineRunTable)
+        .innerJoin(RoutineTable, eq(RoutineTable.id, RoutineRunTable.routine_id))
+        .where(eq(RoutineRunTable.status, "queued"))
+        .orderBy(asc(RoutineRunTable.time_created), asc(RoutineRunTable.id))
+        .all()
+        .pipe(Effect.orDie)
+      if (queued.length === 0) return
+      const running = yield* db
+        .select({ routine_id: RoutineRunTable.routine_id })
+        .from(RoutineRunTable)
+        .where(eq(RoutineRunTable.status, "running"))
+        .all()
+        .pipe(Effect.orDie)
+      const counts = new Map<string, number>()
+      for (const row of running) counts.set(row.routine_id, (counts.get(row.routine_id) ?? 0) + 1)
+      for (const item of queued) {
+        const count = counts.get(item.routine_id) ?? 0
+        if (count >= (item.max_parallel ?? DEFAULT_PARALLEL)) continue
+        const claimed = yield* claim(item.id, now)
+        if (claimed === undefined) continue
+        counts.set(item.routine_id, count + 1)
+        yield* Effect.forkScoped(execute(claimed))
+      }
+    })
+
     const tickAt = Effect.fnUntraced(function* (now: number) {
       const due = yield* db
         .select()
@@ -240,12 +400,29 @@ const layer = Layer.effect(
 
     const tick = Effect.flatMap(Clock.currentTimeMillis, tickAt)
 
-    const run = Effect.forever(
+    const schedule = Effect.forever(
       Effect.gen(function* () {
         yield* tickAt(yield* Clock.currentTimeMillis).pipe(
           Effect.catchCause((cause) => Effect.logError("routine tick failed", { cause })),
         )
         yield* Effect.sleep(30_000)
+      }),
+    )
+
+    // Queued rows are durable, so this also resumes work that was waiting when the server stopped.
+    const executor = Effect.forever(
+      Effect.gen(function* () {
+        yield* drain(yield* Clock.currentTimeMillis).pipe(
+          Effect.catchCause((cause) => Effect.logError("routine executor failed", { cause })),
+        )
+        yield* Effect.sleep(EXECUTOR_INTERVAL)
+      }),
+    )
+
+    const run = Effect.scoped(
+      Effect.gen(function* () {
+        yield* Effect.forkScoped(schedule)
+        return yield* executor
       }),
     )
 
@@ -269,6 +446,7 @@ const layer = Layer.effect(
             prompt: input.prompt,
             mode: input.mode,
             model: input.model,
+            worktree: input.worktree ?? false,
             timeout_seconds: input.timeoutSeconds ?? null,
             max_parallel: input.maxParallel ?? null,
             tags: input.tags ?? [],
@@ -310,6 +488,7 @@ const layer = Layer.effect(
             prompt: input.prompt ?? row.prompt,
             mode: input.mode ?? row.mode,
             model: input.model ?? row.model,
+            worktree: input.worktree ?? row.worktree,
             timeout_seconds: input.timeoutSeconds ?? row.timeout_seconds,
             max_parallel: input.maxParallel ?? row.max_parallel,
             tags: input.tags ?? row.tags,
@@ -342,6 +521,7 @@ const layer = Layer.effect(
             prompt: row.prompt,
             mode: row.mode,
             model: row.model,
+            worktree: row.worktree,
             timeout_seconds: row.timeout_seconds,
             max_parallel: row.max_parallel,
             tags: row.tags,
@@ -389,15 +569,18 @@ const layer = Layer.effect(
       cancelRun: Effect.fn("Routine.cancelRun")(function* (id) {
         const row = yield* findRun(id)
         if (row.status !== "queued" && row.status !== "running") return toRun(row)
+        if (row.status === "running" && row.session_id !== null)
+          yield* sessions.interrupt(Session.ID.make(row.session_id))
         const now = yield* Clock.currentTimeMillis
         const updated = yield* db
           .update(RoutineRunTable)
           .set({ status: "cancelled", time_completed: now })
-          .where(eq(RoutineRunTable.id, id))
+          .where(and(eq(RoutineRunTable.id, id), inArray(RoutineRunTable.status, ACTIVE)))
           .returning()
           .get()
           .pipe(Effect.orDie)
-        return toRun(updated)
+        // A run that settled between the read and the update keeps its terminal status.
+        return toRun(updated ?? (yield* findRun(id)))
       }),
       tick,
       run,
@@ -408,5 +591,5 @@ const layer = Layer.effect(
 export const node: LayerNode.Provider<Service, never, typeof Node.tags.values.global> = makeGlobalNode({
   service: Service,
   layer,
-  deps: [Database.node, Project.node],
+  deps: [Database.node, Project.node, Session.node, Worktree.node],
 })
