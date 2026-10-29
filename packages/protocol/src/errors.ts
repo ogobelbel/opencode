@@ -333,3 +333,21 @@ export class ScheduleNotFoundError extends Schema.TaggedError<ScheduleNotFoundEr
   },
   { httpApiStatus: 404 },
 ) {}
+
+export class RoutineNotFoundError extends Schema.TaggedError<RoutineNotFoundError>()(
+  "RoutineNotFoundError",
+  {
+    routineID: Schema.String,
+    message: Schema.String,
+  },
+  { httpApiStatus: 404 },
+) {}
+
+export class RoutineRunNotFoundError extends Schema.TaggedError<RoutineRunNotFoundError>()(
+  "RoutineRunNotFoundError",
+  {
+    runID: Schema.String,
+    message: Schema.String,
+  },
+  { httpApiStatus: 404 },
+) {}

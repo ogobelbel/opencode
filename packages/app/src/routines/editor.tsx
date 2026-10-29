@@ -1,0 +1,281 @@
+import type { ExperimentalRoutineCreateInput, RoutineInfo, RoutineMode, RoutineModel } from "@opencode/client/promise"
+import { Button } from "@opencode/ui/button"
+import { Select } from "@opencode/ui/select"
+import { Switch } from "@opencode/ui/switch"
+import { TextInput } from "@opencode/ui/text-input"
+import { Textarea } from "@opencode/ui/textarea"
+import { createStore } from "solid-js/store"
+import { useLanguage } from "@/runtime/i18n/language"
+import type { ServerConnection } from "@/runtime/server/registry"
+import { RoutineModelPicker } from "./model-picker"
+
+export type RoutineProject = { projectID: string; directory: string }
+
+type EditorState = {
+  title: string
+  prompt: string
+  projectID: string
+  directory: string
+  cron: string
+  tz: string
+  model: RoutineModel
+  variant: string
+  mode: RoutineMode
+  worktree: boolean
+  timeoutSeconds: string
+  maxParallel: string
+  tags: string
+}
+
+const modes: RoutineMode[] = ["yolo", "read_only"]
+
+const optionalNumber = (value: string) => {
+  const parsed = Number(value)
+
+  return value.trim() && Number.isFinite(parsed) ? parsed : undefined
+}
+
+export function RoutineEditor(props: {
+  routine?: RoutineInfo
+  server: ServerConnection.Any
+  projects: RoutineProject[]
+  defaultModel: RoutineModel
+  onSave(input: ExperimentalRoutineCreateInput): void
+  onCancel(): void
+}) {
+  const language = useLanguage()
+
+  const project = () =>
+    props.projects.find((item) => item.projectID === props.routine?.projectID) ?? props.projects[0]
+
+  const [form, setForm] = createStore<EditorState>({
+    title: props.routine?.title ?? "",
+    prompt: props.routine?.prompt ?? "",
+    projectID: project()?.projectID ?? "",
+    directory: props.routine?.directory ?? project()?.directory ?? "",
+    cron: props.routine?.when.cron ?? "0 9 * * 1-5",
+    tz: props.routine?.when.tz ?? Intl.DateTimeFormat().resolvedOptions().timeZone ?? "UTC",
+    model: props.routine?.model ?? props.defaultModel,
+    variant: props.routine?.model.variant ?? "",
+    mode: props.routine?.mode ?? "read_only",
+    worktree: props.routine?.worktree ?? false,
+    timeoutSeconds: props.routine?.timeoutSeconds?.toString() ?? "",
+    maxParallel: props.routine?.maxParallel?.toString() ?? "",
+    tags: props.routine?.tags.join(", ") ?? "",
+  })
+
+  const save = (event: SubmitEvent) => {
+    event.preventDefault()
+    const title = form.title.trim()
+
+    if (!title || !form.directory || !form.model.providerID || !form.model.modelID) return
+
+    props.onSave({
+      directory: form.directory,
+      title,
+      enabled: props.routine?.enabled ?? true,
+      when: { cron: form.cron.trim(), tz: form.tz.trim() },
+      prompt: form.prompt,
+      mode: form.mode,
+      worktree: form.worktree,
+      model: { ...form.model, variant: form.variant || undefined },
+      timeoutSeconds: optionalNumber(form.timeoutSeconds),
+      maxParallel: optionalNumber(form.maxParallel),
+      tags: form.tags
+        .split(",")
+        .map((tag) => tag.trim())
+        .filter(Boolean),
+    })
+  }
+
+  return (
+    <form
+      data-slot="routine-editor"
+      class="rounded-[10px] border border-v2-border-border-muted bg-v2-background-bg-layer-01 p-4"
+      onSubmit={save}
+    >
+      <div class="mb-3 flex items-center justify-between gap-3">
+        <h2 class="text-[15px] font-medium leading-5 text-v2-text-text-base">
+          {props.routine ? language.t("routines.editor.edit") : language.t("routines.editor.create")}
+        </h2>
+      </div>
+
+      <div class="grid gap-3 md:grid-cols-2">
+        <label class="flex flex-col gap-1.5 md:col-span-2">
+          <span class="text-[13px] leading-[var(--line-height-compact)] text-v2-text-text-muted">
+            {language.t("routines.editor.name")}
+          </span>
+          <TextInput
+            class="!w-full"
+            value={form.title}
+            placeholder={language.t("routines.editor.name.placeholder")}
+            onInput={(event) => setForm("title", event.currentTarget.value)}
+          />
+        </label>
+
+        <label class="flex flex-col gap-1.5 md:col-span-2">
+          <span class="text-[13px] leading-[var(--line-height-compact)] text-v2-text-text-muted">
+            {language.t("routines.editor.prompt")}
+          </span>
+          <Textarea
+            class="!w-full"
+            rows={5}
+            value={form.prompt}
+            placeholder={language.t("routines.editor.prompt.placeholder")}
+            onInput={(event) => setForm("prompt", event.currentTarget.value)}
+          />
+        </label>
+
+        <label class="flex flex-col gap-1.5">
+          <span class="text-[13px] leading-[var(--line-height-compact)] text-v2-text-text-muted">
+            {language.t("routines.editor.directory")}
+          </span>
+          <Select
+            class="!w-full"
+            options={props.projects}
+            current={props.projects.find((item) => item.projectID === form.projectID)}
+            value={(item) => item.projectID}
+            label={(item) => item.directory}
+            onSelect={(item) => {
+              if (!item) return
+              setForm({ projectID: item.projectID, directory: item.directory })
+            }}
+            aria-label={language.t("routines.editor.directory")}
+            disabled={!!props.routine}
+          />
+        </label>
+
+        <label class="flex flex-col gap-1.5">
+          <span class="text-[13px] leading-[var(--line-height-compact)] text-v2-text-text-muted">
+            {language.t("routines.editor.mode")}
+          </span>
+          <Select
+            class="!w-full"
+            options={modes}
+            current={form.mode}
+            value={(mode) => mode}
+            label={(mode) =>
+              mode === "yolo" ? language.t("routines.editor.mode.yolo") : language.t("routines.editor.mode.readOnly")
+            }
+            onSelect={(mode) => mode && setForm("mode", mode)}
+            aria-label={language.t("routines.editor.mode")}
+          />
+        </label>
+
+        <label class="flex flex-col gap-1.5">
+          <span class="text-[13px] leading-[var(--line-height-compact)] text-v2-text-text-muted">
+            {language.t("routines.editor.cron")}
+          </span>
+          <TextInput
+            class="!w-full"
+            value={form.cron}
+            placeholder={language.t("routines.editor.cron.placeholder")}
+            onInput={(event) => setForm("cron", event.currentTarget.value)}
+          />
+        </label>
+
+        <label class="flex flex-col gap-1.5">
+          <span class="text-[13px] leading-[var(--line-height-compact)] text-v2-text-text-muted">
+            {language.t("routines.editor.tz")}
+          </span>
+          <TextInput
+            class="!w-full"
+            value={form.tz}
+            placeholder="UTC"
+            onInput={(event) => setForm("tz", event.currentTarget.value)}
+          />
+        </label>
+
+        <div class="flex flex-col gap-1.5">
+          <span class="text-[13px] leading-[var(--line-height-compact)] text-v2-text-text-muted">
+            {language.t("routines.editor.model")}
+          </span>
+          <RoutineModelPicker
+            server={props.server}
+            directory={form.directory}
+            model={form.model}
+            onChange={(model) => setForm("model", model)}
+          />
+        </div>
+
+        <label class="flex flex-col gap-1.5">
+          <span class="text-[13px] leading-[var(--line-height-compact)] text-v2-text-text-muted">
+            {language.t("routines.editor.variant")}
+          </span>
+          <TextInput
+            class="!w-full"
+            value={form.variant}
+            placeholder={language.t("routines.editor.variant.placeholder")}
+            onInput={(event) => setForm("variant", event.currentTarget.value)}
+          />
+        </label>
+
+        <label class="flex flex-col gap-1.5">
+          <span class="text-[13px] leading-[var(--line-height-compact)] text-v2-text-text-muted">
+            {language.t("routines.editor.timeout")}
+          </span>
+          <TextInput
+            class="!w-full"
+            type="number"
+            min={0}
+            numeric
+            value={form.timeoutSeconds}
+            onInput={(event) => setForm("timeoutSeconds", event.currentTarget.value)}
+          />
+        </label>
+
+        <label class="flex flex-col gap-1.5">
+          <span class="text-[13px] leading-[var(--line-height-compact)] text-v2-text-text-muted">
+            {language.t("routines.editor.maxParallel")}
+          </span>
+          <TextInput
+            class="!w-full"
+            type="number"
+            min={1}
+            numeric
+            value={form.maxParallel}
+            onInput={(event) => setForm("maxParallel", event.currentTarget.value)}
+          />
+        </label>
+
+        <div class="flex flex-col gap-1.5 md:col-span-2">
+          <Switch
+            checked={form.worktree}
+            onChange={(checked) => setForm("worktree", checked)}
+            aria-label={language.t("routines.editor.worktree")}
+          >
+            {language.t("routines.editor.worktree")}
+          </Switch>
+          <span class="text-[13px] leading-[var(--line-height-compact)] text-v2-text-text-muted">
+            {language.t("routines.editor.worktree.hint")}
+          </span>
+        </div>
+
+        <label class="flex flex-col gap-1.5 md:col-span-2">
+          <span class="text-[13px] leading-[var(--line-height-compact)] text-v2-text-text-muted">
+            {language.t("routines.editor.tags")}
+          </span>
+          <TextInput
+            class="!w-full"
+            value={form.tags}
+            placeholder={language.t("routines.editor.tags.placeholder")}
+            onInput={(event) => setForm("tags", event.currentTarget.value)}
+          />
+        </label>
+      </div>
+
+      <div class="mt-4 flex items-center justify-end gap-2">
+        <Button type="button" variant="ghost" onClick={props.onCancel}>
+          {language.t("routines.editor.cancel")}
+        </Button>
+        <Button
+          type="submit"
+          variant="contrast"
+          disabled={!form.title.trim() || !form.directory || !form.model.providerID || !form.model.modelID}
+        >
+          {language.t("routines.editor.save")}
+        </Button>
+      </div>
+    </form>
+  )
+}

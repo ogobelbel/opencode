@@ -333,6 +333,24 @@ export type ScheduleStatus = "active" | "paused" | "done"
 
 export type ScheduleOutcome = "fired" | "late" | "skipped" | "disabled" | "failed"
 
+export type RoutineID = string
+
+export type RoutineWhen = { cron: string; tz: string }
+
+export type RoutineMode = "yolo" | "read_only"
+
+export type RoutineModel = { providerID: string; modelID: string; variant?: string }
+
+export type RoutineTime = { created: number; updated: number }
+
+export type RoutineRunID = string
+
+export type RoutineRunStatus = "queued" | "running" | "completed" | "failed" | "cancelled" | "skipped"
+
+export type RoutineDiff = { additions: number; deletions: number; files: number }
+
+export type RoutineRunTime = { created: number; started?: number; completed?: number }
+
 export type ReferenceGitSource = { type: "git"; repository: string; branch?: string }
 
 export type VcsBranch = { current?: string; default?: string }
@@ -906,6 +924,39 @@ export type ScheduleWhenIn = { type: "in"; in: ScheduleDuration; tz?: string }
 export type ScheduleWhenEvery = { type: "every"; every: ScheduleDuration; tz?: string }
 
 export type ScheduleAction = ScheduleActionPrompt
+
+export type RoutineInfo = {
+  id: RoutineID
+  directory: string
+  projectID: string
+  title: string
+  enabled: boolean
+  when: RoutineWhen
+  prompt: string
+  mode: RoutineMode
+  model: RoutineModel
+  worktree?: boolean
+  timeoutSeconds?: number
+  maxParallel?: number
+  tags: Array<string>
+  lastRunAt?: number
+  nextRunAt?: number
+  lastSessionID?: string
+  time: RoutineTime
+}
+
+export type RoutineRun = {
+  id: RoutineRunID
+  routineID: RoutineID
+  sessionID?: string
+  status: RoutineRunStatus
+  error?: string
+  worktreePath?: string
+  branch?: string
+  diff?: RoutineDiff
+  summary?: string
+  time: RoutineRunTime
+}
 
 export type VcsInfo = { provider?: string; branch: VcsBranch }
 
@@ -3107,6 +3158,22 @@ export type ScheduleNotFoundError = {
 export const isScheduleNotFoundError = (value: unknown): value is ScheduleNotFoundError =>
   typeof value === "object" && value !== null && "_tag" in value && value["_tag"] === "ScheduleNotFoundError"
 
+export type RoutineNotFoundError = {
+  readonly _tag: "RoutineNotFoundError"
+  readonly routineID: string
+  readonly message: string
+}
+export const isRoutineNotFoundError = (value: unknown): value is RoutineNotFoundError =>
+  typeof value === "object" && value !== null && "_tag" in value && value["_tag"] === "RoutineNotFoundError"
+
+export type RoutineRunNotFoundError = {
+  readonly _tag: "RoutineRunNotFoundError"
+  readonly runID: string
+  readonly message: string
+}
+export const isRoutineRunNotFoundError = (value: unknown): value is RoutineRunNotFoundError =>
+  typeof value === "object" && value !== null && "_tag" in value && value["_tag"] === "RoutineRunNotFoundError"
+
 export type ShellNotFoundError = { readonly _tag: "ShellNotFoundError"; readonly id: string; readonly message: string }
 export const isShellNotFoundError = (value: unknown): value is ShellNotFoundError =>
   typeof value === "object" && value !== null && "_tag" in value && value["_tag"] === "ShellNotFoundError"
@@ -4433,6 +4500,70 @@ export type ExperimentalScheduleResumeOutput = { data: ScheduleInfo }["data"]
 export type ExperimentalScheduleDeleteInput = { readonly scheduleID: string }
 
 export type ExperimentalScheduleDeleteOutput = void
+
+export type ExperimentalRoutineListInput = { readonly directory?: string | undefined }
+
+export type ExperimentalRoutineListOutput = { data: Array<RoutineInfo> }["data"]
+
+export type ExperimentalRoutineCreateInput = {
+  readonly directory: string
+  readonly title: string
+  readonly enabled?: boolean | undefined
+  readonly when: { readonly cron: string; readonly tz: string }
+  readonly prompt: string
+  readonly mode: "yolo" | "read_only"
+  readonly model: { readonly providerID: string; readonly modelID: string; readonly variant?: string }
+  readonly worktree?: boolean | undefined
+  readonly timeoutSeconds?: number | undefined
+  readonly maxParallel?: number | undefined
+  readonly tags?: ReadonlyArray<string> | undefined
+}
+
+export type ExperimentalRoutineCreateOutput = { data: RoutineInfo }["data"]
+
+export type ExperimentalRoutineGetInput = { readonly routineID: string }
+
+export type ExperimentalRoutineGetOutput = { data: RoutineInfo }["data"]
+
+export type ExperimentalRoutineUpdateInput = {
+  readonly routineID: string
+  readonly title?: string | undefined
+  readonly enabled?: boolean | undefined
+  readonly when?: { readonly cron: string; readonly tz: string } | undefined
+  readonly prompt?: string | undefined
+  readonly mode?: ("yolo" | "read_only") | undefined
+  readonly model?: { readonly providerID: string; readonly modelID: string; readonly variant?: string } | undefined
+  readonly worktree?: boolean | undefined
+  readonly timeoutSeconds?: number | undefined
+  readonly maxParallel?: number | undefined
+  readonly tags?: ReadonlyArray<string> | undefined
+}
+
+export type ExperimentalRoutineUpdateOutput = { data: RoutineInfo }["data"]
+
+export type ExperimentalRoutineDeleteInput = { readonly routineID: string }
+
+export type ExperimentalRoutineDeleteOutput = void
+
+export type ExperimentalRoutineRunInput = { readonly routineID: string }
+
+export type ExperimentalRoutineRunOutput = { data: RoutineRun }["data"]
+
+export type ExperimentalRoutineDuplicateInput = { readonly routineID: string }
+
+export type ExperimentalRoutineDuplicateOutput = { data: RoutineInfo }["data"]
+
+export type ExperimentalRoutineRunsInput = { readonly routineID: string; readonly limit?: number | undefined }
+
+export type ExperimentalRoutineRunsOutput = { data: Array<RoutineRun> }["data"]
+
+export type ExperimentalRoutineGetRunInput = { readonly runID: string }
+
+export type ExperimentalRoutineGetRunOutput = { data: RoutineRun }["data"]
+
+export type ExperimentalRoutineCancelRunInput = { readonly runID: string }
+
+export type ExperimentalRoutineCancelRunOutput = { data: RoutineRun }["data"]
 
 export type ShellListInput = { readonly location?: { readonly directory?: string | undefined } | undefined }
 

@@ -38,6 +38,7 @@ import type { Command } from "@opencode/schema/command"
 import type { OpenCodeEvent } from "@opencode/protocol/groups/event"
 import type { Pty } from "@opencode/schema/pty"
 import type { Schedule } from "@opencode/schema/schedule"
+import type { Routine } from "@opencode/schema/routine"
 import type { Reference } from "@opencode/schema/reference"
 import type { Worktree } from "@opencode/schema/worktree"
 import type { Vcs } from "@opencode/schema/vcs"
@@ -2413,6 +2414,90 @@ export type ExperimentalScheduleDeleteOperation<E = never> = (
   input: ExperimentalScheduleDeleteInput,
 ) => Effect.Effect<ExperimentalScheduleDeleteOutput, E>
 
+export type ExperimentalRoutineListInput = { readonly directory?: string | undefined }
+export type ExperimentalRoutineListOutput = ReadonlyArray<Routine.Info>
+export type ExperimentalRoutineListOperation<E = never> = (
+  input?: ExperimentalRoutineListInput,
+) => Effect.Effect<ExperimentalRoutineListOutput, E>
+
+export type ExperimentalRoutineCreateInput = {
+  readonly directory: string
+  readonly title: string
+  readonly enabled?: boolean | undefined
+  readonly when: Routine.When
+  readonly prompt: string
+  readonly mode: Routine.Mode
+  readonly model: Routine.Model
+  readonly worktree?: boolean | undefined
+  readonly timeoutSeconds?: number | undefined
+  readonly maxParallel?: number | undefined
+  readonly tags?: ReadonlyArray<string> | undefined
+}
+export type ExperimentalRoutineCreateOutput = Routine.Info
+export type ExperimentalRoutineCreateOperation<E = never> = (
+  input: ExperimentalRoutineCreateInput,
+) => Effect.Effect<ExperimentalRoutineCreateOutput, E>
+
+export type ExperimentalRoutineGetInput = { readonly routineID: Routine.ID }
+export type ExperimentalRoutineGetOutput = Routine.Info
+export type ExperimentalRoutineGetOperation<E = never> = (
+  input: ExperimentalRoutineGetInput,
+) => Effect.Effect<ExperimentalRoutineGetOutput, E>
+
+export type ExperimentalRoutineUpdateInput = {
+  readonly routineID: Routine.ID
+  readonly title?: string | undefined
+  readonly enabled?: boolean | undefined
+  readonly when?: Routine.When | undefined
+  readonly prompt?: string | undefined
+  readonly mode?: Routine.Mode | undefined
+  readonly model?: Routine.Model | undefined
+  readonly worktree?: boolean | undefined
+  readonly timeoutSeconds?: number | undefined
+  readonly maxParallel?: number | undefined
+  readonly tags?: ReadonlyArray<string> | undefined
+}
+export type ExperimentalRoutineUpdateOutput = Routine.Info
+export type ExperimentalRoutineUpdateOperation<E = never> = (
+  input: ExperimentalRoutineUpdateInput,
+) => Effect.Effect<ExperimentalRoutineUpdateOutput, E>
+
+export type ExperimentalRoutineDeleteInput = { readonly routineID: Routine.ID }
+export type ExperimentalRoutineDeleteOutput = void
+export type ExperimentalRoutineDeleteOperation<E = never> = (
+  input: ExperimentalRoutineDeleteInput,
+) => Effect.Effect<ExperimentalRoutineDeleteOutput, E>
+
+export type ExperimentalRoutineRunInput = { readonly routineID: Routine.ID }
+export type ExperimentalRoutineRunOutput = Routine.Run
+export type ExperimentalRoutineRunOperation<E = never> = (
+  input: ExperimentalRoutineRunInput,
+) => Effect.Effect<ExperimentalRoutineRunOutput, E>
+
+export type ExperimentalRoutineDuplicateInput = { readonly routineID: Routine.ID }
+export type ExperimentalRoutineDuplicateOutput = Routine.Info
+export type ExperimentalRoutineDuplicateOperation<E = never> = (
+  input: ExperimentalRoutineDuplicateInput,
+) => Effect.Effect<ExperimentalRoutineDuplicateOutput, E>
+
+export type ExperimentalRoutineRunsInput = { readonly routineID: Routine.ID; readonly limit?: number | undefined }
+export type ExperimentalRoutineRunsOutput = ReadonlyArray<Routine.Run>
+export type ExperimentalRoutineRunsOperation<E = never> = (
+  input: ExperimentalRoutineRunsInput,
+) => Effect.Effect<ExperimentalRoutineRunsOutput, E>
+
+export type ExperimentalRoutineGetRunInput = { readonly runID: Routine.RunID }
+export type ExperimentalRoutineGetRunOutput = Routine.Run
+export type ExperimentalRoutineGetRunOperation<E = never> = (
+  input: ExperimentalRoutineGetRunInput,
+) => Effect.Effect<ExperimentalRoutineGetRunOutput, E>
+
+export type ExperimentalRoutineCancelRunInput = { readonly runID: Routine.RunID }
+export type ExperimentalRoutineCancelRunOutput = Routine.Run
+export type ExperimentalRoutineCancelRunOperation<E = never> = (
+  input: ExperimentalRoutineCancelRunInput,
+) => Effect.Effect<ExperimentalRoutineCancelRunOutput, E>
+
 export interface ExperimentalApi<E = never> {
   readonly persistentPty: {
     readonly read: ExperimentalPersistentPtyReadOperation<E>
@@ -2433,6 +2518,18 @@ export interface ExperimentalApi<E = never> {
     readonly pause: ExperimentalSchedulePauseOperation<E>
     readonly resume: ExperimentalScheduleResumeOperation<E>
     readonly delete: ExperimentalScheduleDeleteOperation<E>
+  }
+  readonly routine: {
+    readonly list: ExperimentalRoutineListOperation<E>
+    readonly create: ExperimentalRoutineCreateOperation<E>
+    readonly get: ExperimentalRoutineGetOperation<E>
+    readonly update: ExperimentalRoutineUpdateOperation<E>
+    readonly delete: ExperimentalRoutineDeleteOperation<E>
+    readonly run: ExperimentalRoutineRunOperation<E>
+    readonly duplicate: ExperimentalRoutineDuplicateOperation<E>
+    readonly runs: ExperimentalRoutineRunsOperation<E>
+    readonly getRun: ExperimentalRoutineGetRunOperation<E>
+    readonly cancelRun: ExperimentalRoutineCancelRunOperation<E>
   }
 }
 
