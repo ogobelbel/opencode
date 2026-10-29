@@ -5,7 +5,7 @@ import { useQuery } from "@tanstack/solid-query"
 import { createMemo, onCleanup, type ParentProps } from "solid-js"
 import { useProviders } from "@/providers/catalog/providers"
 import { LocalProvider, useLocal } from "@/providers/models/selection"
-import { DialogSelectModelNext } from "@/providers/models/select-dialog-next"
+import { DialogSelectModel } from "@/providers/models/select-dialog"
 import { useDialog } from "@opencode/ui/context/dialog"
 import { ModelPickerProvider, type ModelPicker } from "@opencode/ui/context/model-picker"
 import type { ServerConnection } from "@/runtime/server/registry"
@@ -141,6 +141,8 @@ export function SessionUIProvider(
           shellRunning={(id) => !!data.shell.get(id)}
           shellOutput={(input) => serverSDK.api.shell.output(input)}
           form={data.session.form}
+          readMedia={(uri, mime, signal) => serverSDK.media.load(uri, mime, signal)}
+          peekMedia={(uri, mime) => serverSDK.media.peek(uri, mime)}
           turnDiff={{
             get: (input) => turnDiffs()?.get(input),
             load: (input) => turnDiffs()?.load(input, () => serverSDK.api.session.diff(input)),
@@ -168,7 +170,7 @@ function ModelPickerHost(props: ParentProps) {
 
   const open: ModelPicker = (input) =>
     dialog.show(() => (
-      <DialogSelectModelNext model={local.model} current={input.current} onPick={input.onPick} />
+      <DialogSelectModel model={local.model} current={input.current} onPick={input.onPick} />
     ))
 
   return <ModelPickerProvider open={open}>{props.children}</ModelPickerProvider>

@@ -284,6 +284,8 @@ const source = {
 
   "ui.message.expand": "Expand message",
   "ui.message.collapse": "Collapse message",
+  "ui.message.readMore": "Read more",
+  "ui.message.showLess": "Show less",
   "ui.message.copy": "Copy",
   "ui.message.copyMessage": "Copy message",
   "ui.message.copyFullMessage": "Copy full message",
@@ -339,6 +341,8 @@ const source = {
   "ui.question.answer.none": "(no answer)",
   "ui.question.review.notAnswered": "(not answered)",
   "ui.question.multiHint": "Pick any",
+  "ui.question.singleHint": "Select one answer",
+  "ui.question.classic.multiHint": "Select all answers that apply",
   "ui.question.custom.placeholder": "Type your answer…",
   "ui.question.custom.answerPlaceholder": "Type your own answer…",
 } satisfies Record<string, string>
