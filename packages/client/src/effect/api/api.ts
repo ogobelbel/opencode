@@ -2428,6 +2428,7 @@ export type ExperimentalRoutineCreateInput = {
   readonly prompt: string
   readonly mode: Routine.Mode
   readonly model: Routine.Model
+  readonly worktree?: boolean | undefined
   readonly timeoutSeconds?: number | undefined
   readonly maxParallel?: number | undefined
   readonly tags?: ReadonlyArray<string> | undefined
@@ -2451,6 +2452,7 @@ export type ExperimentalRoutineUpdateInput = {
   readonly prompt?: string | undefined
   readonly mode?: Routine.Mode | undefined
   readonly model?: Routine.Model | undefined
+  readonly worktree?: boolean | undefined
   readonly timeoutSeconds?: number | undefined
   readonly maxParallel?: number | undefined
   readonly tags?: ReadonlyArray<string> | undefined

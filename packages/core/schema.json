@@ -1,8 +1,8 @@
 {
   "version": "7",
   "dialect": "sqlite",
-  "id": "374ad931-20db-4bf9-8d2f-18884d0b6e9a",
-  "prevIds": ["e5daa0af-cae7-4057-919a-ebf44dfced0a"],
+  "id": "2b7709c6-a43d-4d2a-b680-a15d1389b5b2",
+  "prevIds": ["374ad931-20db-4bf9-8d2f-18884d0b6e9a"],
   "ddl": [
     {
       "name": "account_state",
@@ -841,6 +841,16 @@
       "table": "routine_run"
     },
     {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "summary",
+      "entityType": "columns",
+      "table": "routine_run"
+    },
+    {
       "type": "integer",
       "notNull": true,
       "autoincrement": false,
@@ -957,6 +967,16 @@
       "default": null,
       "generated": null,
       "name": "model",
+      "entityType": "columns",
+      "table": "routine"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "false",
+      "generated": null,
+      "name": "worktree",
       "entityType": "columns",
       "table": "routine"
     },
