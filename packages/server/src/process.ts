@@ -4,6 +4,7 @@ import { NodeHttpServer } from "@effect/platform-node"
 import { Bus } from "@opencode/core/bus"
 import { SessionRestart } from "@opencode/core/session/execution/restart"
 import { Schedule } from "@opencode/core/schedule"
+import { Routine } from "@opencode/core/routine"
 import { InstallationEvent } from "@opencode/schema/installation-event"
 import { hasPtyConnectTicketURL } from "@opencode/protocol/groups/pty"
 import { hasPersistentPtyConnectTicketURL } from "@opencode/protocol/groups/persistent-pty"
@@ -114,6 +115,8 @@ export const start = Effect.fn("ServerProcess.start")(function* <E, R>(
       yield* installRestartContinuity(Context.get(context, SessionRestart.Service)).pipe(
         Effect.provideService(Scope.Scope, applicationScope),
       )
+      // Routines queue their runs in the same table; P1 executes them.
+      yield* Effect.forkIn(Context.get(context, Routine.Service).run, applicationScope)
     }
     // Schedules fire from any server process (`service`, `opencode serve`, or `--standalone`); the table holds all their state.
     yield* Effect.forkIn(Context.get(context, Schedule.Service).run, applicationScope)
