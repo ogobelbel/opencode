@@ -255,6 +255,26 @@ import type {
   ExperimentalScheduleResumeOutput,
   ExperimentalScheduleDeleteInput,
   ExperimentalScheduleDeleteOutput,
+  ExperimentalRoutineListInput,
+  ExperimentalRoutineListOutput,
+  ExperimentalRoutineCreateInput,
+  ExperimentalRoutineCreateOutput,
+  ExperimentalRoutineGetInput,
+  ExperimentalRoutineGetOutput,
+  ExperimentalRoutineUpdateInput,
+  ExperimentalRoutineUpdateOutput,
+  ExperimentalRoutineDeleteInput,
+  ExperimentalRoutineDeleteOutput,
+  ExperimentalRoutineRunInput,
+  ExperimentalRoutineRunOutput,
+  ExperimentalRoutineDuplicateInput,
+  ExperimentalRoutineDuplicateOutput,
+  ExperimentalRoutineRunsInput,
+  ExperimentalRoutineRunsOutput,
+  ExperimentalRoutineGetRunInput,
+  ExperimentalRoutineGetRunOutput,
+  ExperimentalRoutineCancelRunInput,
+  ExperimentalRoutineCancelRunOutput,
   ShellListInput,
   ShellListOutput,
   ShellCreateInput,
@@ -1564,6 +1584,143 @@ export function make(options: ClientOptions) {
             },
             requestOptions,
           ),
+      },
+      routine: {
+        list: (input?: ExperimentalRoutineListInput, requestOptions?: RequestOptions) =>
+          request<{ readonly data: ExperimentalRoutineListOutput }>(
+            {
+              method: "GET",
+              path: `/api/experimental/routine`,
+              query: { directory: input?.["directory"] },
+              successStatus: 200,
+              declaredStatuses: [400, 401],
+              empty: false,
+            },
+            requestOptions,
+          ).then((value) => value.data),
+        create: (input: ExperimentalRoutineCreateInput, requestOptions?: RequestOptions) =>
+          request<{ readonly data: ExperimentalRoutineCreateOutput }>(
+            {
+              method: "POST",
+              path: `/api/experimental/routine`,
+              body: {
+                directory: input["directory"],
+                title: input["title"],
+                enabled: input["enabled"],
+                when: input["when"],
+                prompt: input["prompt"],
+                mode: input["mode"],
+                model: input["model"],
+                timeoutSeconds: input["timeoutSeconds"],
+                maxParallel: input["maxParallel"],
+                tags: input["tags"],
+              },
+              successStatus: 200,
+              declaredStatuses: [400, 401],
+              empty: false,
+            },
+            requestOptions,
+          ).then((value) => value.data),
+        get: (input: ExperimentalRoutineGetInput, requestOptions?: RequestOptions) =>
+          request<{ readonly data: ExperimentalRoutineGetOutput }>(
+            {
+              method: "GET",
+              path: `/api/experimental/routine/${encodeURIComponent(input.routineID)}`,
+              successStatus: 200,
+              declaredStatuses: [400, 401, 404],
+              empty: false,
+            },
+            requestOptions,
+          ).then((value) => value.data),
+        update: (input: ExperimentalRoutineUpdateInput, requestOptions?: RequestOptions) =>
+          request<{ readonly data: ExperimentalRoutineUpdateOutput }>(
+            {
+              method: "PATCH",
+              path: `/api/experimental/routine/${encodeURIComponent(input.routineID)}`,
+              body: {
+                title: input["title"],
+                enabled: input["enabled"],
+                when: input["when"],
+                prompt: input["prompt"],
+                mode: input["mode"],
+                model: input["model"],
+                timeoutSeconds: input["timeoutSeconds"],
+                maxParallel: input["maxParallel"],
+                tags: input["tags"],
+              },
+              successStatus: 200,
+              declaredStatuses: [400, 401, 404],
+              empty: false,
+            },
+            requestOptions,
+          ).then((value) => value.data),
+        delete: (input: ExperimentalRoutineDeleteInput, requestOptions?: RequestOptions) =>
+          request<ExperimentalRoutineDeleteOutput>(
+            {
+              method: "DELETE",
+              path: `/api/experimental/routine/${encodeURIComponent(input.routineID)}`,
+              successStatus: 204,
+              declaredStatuses: [400, 401, 404],
+              empty: true,
+            },
+            requestOptions,
+          ),
+        run: (input: ExperimentalRoutineRunInput, requestOptions?: RequestOptions) =>
+          request<{ readonly data: ExperimentalRoutineRunOutput }>(
+            {
+              method: "POST",
+              path: `/api/experimental/routine/${encodeURIComponent(input.routineID)}/run`,
+              successStatus: 200,
+              declaredStatuses: [400, 401, 404],
+              empty: false,
+            },
+            requestOptions,
+          ).then((value) => value.data),
+        duplicate: (input: ExperimentalRoutineDuplicateInput, requestOptions?: RequestOptions) =>
+          request<{ readonly data: ExperimentalRoutineDuplicateOutput }>(
+            {
+              method: "POST",
+              path: `/api/experimental/routine/${encodeURIComponent(input.routineID)}/duplicate`,
+              successStatus: 200,
+              declaredStatuses: [400, 401, 404],
+              empty: false,
+            },
+            requestOptions,
+          ).then((value) => value.data),
+        runs: (input: ExperimentalRoutineRunsInput, requestOptions?: RequestOptions) =>
+          request<{ readonly data: ExperimentalRoutineRunsOutput }>(
+            {
+              method: "GET",
+              path: `/api/experimental/routine/${encodeURIComponent(input.routineID)}/runs`,
+              query: { limit: input["limit"] },
+              successStatus: 200,
+              declaredStatuses: [400, 401, 404],
+              empty: false,
+            },
+            requestOptions,
+          ).then((value) => value.data),
+        getRun: (input: ExperimentalRoutineGetRunInput, requestOptions?: RequestOptions) =>
+          request<{ readonly data: ExperimentalRoutineGetRunOutput }>(
+            {
+              method: "GET",
+              path: `/api/experimental/routine/run/${encodeURIComponent(input.runID)}`,
+              successStatus: 200,
+              declaredStatuses: [400, 401, 404],
+              empty: false,
+            },
+            requestOptions,
+          ).then((value) => value.data),
+        cancelRun: (input: ExperimentalRoutineCancelRunInput, requestOptions?: RequestOptions) =>
+          request<{ readonly data: ExperimentalRoutineCancelRunOutput }>(
+            {
+              method: "POST",
+              path: `/api/experimental/routine/run/${encodeURIComponent(input.runID)}/cancel`,
+              successStatus: 200,
+              declaredStatuses: [400, 401, 404],
+              empty: false,
+            },
+            requestOptions,
+          ).then((value) => value.data),
       },
       migration: {
         v1: {

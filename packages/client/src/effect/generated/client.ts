@@ -255,6 +255,26 @@ import type {
   ExperimentalScheduleResumeOutput,
   ExperimentalScheduleDeleteInput,
   ExperimentalScheduleDeleteOutput,
+  ExperimentalRoutineListInput,
+  ExperimentalRoutineListOutput,
+  ExperimentalRoutineCreateInput,
+  ExperimentalRoutineCreateOutput,
+  ExperimentalRoutineGetInput,
+  ExperimentalRoutineGetOutput,
+  ExperimentalRoutineUpdateInput,
+  ExperimentalRoutineUpdateOutput,
+  ExperimentalRoutineDeleteInput,
+  ExperimentalRoutineDeleteOutput,
+  ExperimentalRoutineRunInput,
+  ExperimentalRoutineRunOutput,
+  ExperimentalRoutineDuplicateInput,
+  ExperimentalRoutineDuplicateOutput,
+  ExperimentalRoutineRunsInput,
+  ExperimentalRoutineRunsOutput,
+  ExperimentalRoutineGetRunInput,
+  ExperimentalRoutineGetRunOutput,
+  ExperimentalRoutineCancelRunInput,
+  ExperimentalRoutineCancelRunOutput,
   ShellListInput,
   ShellListOutput,
   ShellCreateInput,
@@ -1627,6 +1647,124 @@ const EndpointExperimentalScheduleDelete =
       raw["schedule.delete"]({ params: { scheduleID: input["scheduleID"] } }).pipe(Effect.mapError(mapClientError)),
     )
 
+const EndpointExperimentalRoutineList =
+  (raw: RawClient["server.experimental"]) => (input?: ExperimentalRoutineListInput) =>
+    preserveEffect<ExperimentalRoutineListOutput>()(
+      raw["experimental.routine.list"]({ query: { directory: input?.["directory"] } }).pipe(
+        Effect.mapError(mapClientError),
+        Effect.map((value) => value.data),
+      ),
+    )
+
+const EndpointExperimentalRoutineCreate =
+  (raw: RawClient["server.experimental"]) => (input: ExperimentalRoutineCreateInput) =>
+    preserveEffect<ExperimentalRoutineCreateOutput>()(
+      raw["experimental.routine.create"]({
+        payload: {
+          directory: input["directory"],
+          title: input["title"],
+          enabled: input["enabled"],
+          when: input["when"],
+          prompt: input["prompt"],
+          mode: input["mode"],
+          model: input["model"],
+          timeoutSeconds: input["timeoutSeconds"],
+          maxParallel: input["maxParallel"],
+          tags: input["tags"],
+        },
+      }).pipe(
+        Effect.mapError(mapClientError),
+        Effect.map((value) => value.data),
+      ),
+    )
+
+const EndpointExperimentalRoutineGet =
+  (raw: RawClient["server.experimental"]) => (input: ExperimentalRoutineGetInput) =>
+    preserveEffect<ExperimentalRoutineGetOutput>()(
+      raw["experimental.routine.get"]({ params: { routineID: input["routineID"] } }).pipe(
+        Effect.mapError(mapClientError),
+        Effect.map((value) => value.data),
+      ),
+    )
+
+const EndpointExperimentalRoutineUpdate =
+  (raw: RawClient["server.experimental"]) => (input: ExperimentalRoutineUpdateInput) =>
+    preserveEffect<ExperimentalRoutineUpdateOutput>()(
+      raw["experimental.routine.update"]({
+        params: { routineID: input["routineID"] },
+        payload: {
+          title: input["title"],
+          enabled: input["enabled"],
+          when: input["when"],
+          prompt: input["prompt"],
+          mode: input["mode"],
+          model: input["model"],
+          timeoutSeconds: input["timeoutSeconds"],
+          maxParallel: input["maxParallel"],
+          tags: input["tags"],
+        },
+      }).pipe(
+        Effect.mapError(mapClientError),
+        Effect.map((value) => value.data),
+      ),
+    )
+
+const EndpointExperimentalRoutineDelete =
+  (raw: RawClient["server.experimental"]) => (input: ExperimentalRoutineDeleteInput) =>
+    preserveEffect<ExperimentalRoutineDeleteOutput>()(
+      raw["experimental.routine.delete"]({ params: { routineID: input["routineID"] } }).pipe(
+        Effect.mapError(mapClientError),
+      ),
+    )
+
+const EndpointExperimentalRoutineRun =
+  (raw: RawClient["server.experimental"]) => (input: ExperimentalRoutineRunInput) =>
+    preserveEffect<ExperimentalRoutineRunOutput>()(
+      raw["experimental.routine.run"]({ params: { routineID: input["routineID"] } }).pipe(
+        Effect.mapError(mapClientError),
+        Effect.map((value) => value.data),
+      ),
+    )
+
+const EndpointExperimentalRoutineDuplicate =
+  (raw: RawClient["server.experimental"]) => (input: ExperimentalRoutineDuplicateInput) =>
+    preserveEffect<ExperimentalRoutineDuplicateOutput>()(
+      raw["experimental.routine.duplicate"]({ params: { routineID: input["routineID"] } }).pipe(
+        Effect.mapError(mapClientError),
+        Effect.map((value) => value.data),
+      ),
+    )
+
+const EndpointExperimentalRoutineRuns =
+  (raw: RawClient["server.experimental"]) => (input: ExperimentalRoutineRunsInput) =>
+    preserveEffect<ExperimentalRoutineRunsOutput>()(
+      raw["experimental.routine.runs"]({
+        params: { routineID: input["routineID"] },
+        query: { limit: input["limit"] },
+      }).pipe(
+        Effect.mapError(mapClientError),
+        Effect.map((value) => value.data),
+      ),
+    )
+
+const EndpointExperimentalRoutineGetRun =
+  (raw: RawClient["server.experimental"]) => (input: ExperimentalRoutineGetRunInput) =>
+    preserveEffect<ExperimentalRoutineGetRunOutput>()(
+      raw["experimental.routine.getRun"]({ params: { runID: input["runID"] } }).pipe(
+        Effect.mapError(mapClientError),
+        Effect.map((value) => value.data),
+      ),
+    )
+
+const EndpointExperimentalRoutineCancelRun =
+  (raw: RawClient["server.experimental"]) => (input: ExperimentalRoutineCancelRunInput) =>
+    preserveEffect<ExperimentalRoutineCancelRunOutput>()(
+      raw["experimental.routine.cancelRun"]({ params: { runID: input["runID"] } }).pipe(
+        Effect.mapError(mapClientError),
+        Effect.map((value) => value.data),
+      ),
+    )
+
 const adaptGroupExperimental = (raw: RawClient["server.experimental"]) => ({
   persistentPty: {
     read: EndpointExperimentalPersistentPtyRead(raw),
@@ -1647,6 +1785,18 @@ const adaptGroupExperimental = (raw: RawClient["server.experimental"]) => ({
     pause: EndpointExperimentalSchedulePause(raw),
     resume: EndpointExperimentalScheduleResume(raw),
     delete: EndpointExperimentalScheduleDelete(raw),
+  },
+  routine: {
+    list: EndpointExperimentalRoutineList(raw),
+    create: EndpointExperimentalRoutineCreate(raw),
+    get: EndpointExperimentalRoutineGet(raw),
+    update: EndpointExperimentalRoutineUpdate(raw),
+    delete: EndpointExperimentalRoutineDelete(raw),
+    run: EndpointExperimentalRoutineRun(raw),
+    duplicate: EndpointExperimentalRoutineDuplicate(raw),
+    runs: EndpointExperimentalRoutineRuns(raw),
+    getRun: EndpointExperimentalRoutineGetRun(raw),
+    cancelRun: EndpointExperimentalRoutineCancelRun(raw),
   },
 })
 

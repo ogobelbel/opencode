@@ -14,6 +14,7 @@ import { Api } from "../api"
 import { CorsConfig, isAllowedRequestOrigin } from "../cors"
 import { makeMediaGet } from "./media"
 import { type Outbound, runPtySocket } from "./pty-socket"
+import { makeRoutine } from "./routine"
 import { makeSchedule } from "./schedule"
 
 export const PersistentPtyHandler = HttpApiBuilder.group(Api, "server.experimental", (handlers) =>
@@ -23,6 +24,7 @@ export const PersistentPtyHandler = HttpApiBuilder.group(Api, "server.experiment
     const pty = yield* PersistentPty.Service
     const mediaGet = yield* makeMediaGet
     const schedule = yield* makeSchedule
+    const routine = yield* makeRoutine
 
     return handlers
       .handleRaw("media.get", (ctx) => mediaGet(ctx.params.hash, ctx.request))
@@ -32,6 +34,18 @@ export const PersistentPtyHandler = HttpApiBuilder.group(Api, "server.experiment
       .handle("schedule.pause", (ctx) => schedule.pause(ctx.params.scheduleID))
       .handle("schedule.resume", (ctx) => schedule.resume(ctx.params.scheduleID))
       .handle("schedule.delete", (ctx) => schedule.remove(ctx.params.scheduleID))
+      .handle("experimental.routine.list", (ctx) => routine.list(ctx.query))
+      .handle("experimental.routine.create", (ctx) => routine.create(ctx.payload))
+      .handle("experimental.routine.get", (ctx) => routine.get(ctx.params.routineID))
+      .handle("experimental.routine.update", (ctx) => routine.update(ctx.params.routineID, ctx.payload))
+      .handle("experimental.routine.delete", (ctx) => routine.remove(ctx.params.routineID))
+      .handle("experimental.routine.run", (ctx) => routine.run(ctx.params.routineID))
+      .handle("experimental.routine.duplicate", (ctx) => routine.duplicate(ctx.params.routineID))
+      .handle("experimental.routine.runs", (ctx) =>
+        routine.runs({ routineID: ctx.params.routineID, limit: ctx.query.limit }),
+      )
+      .handle("experimental.routine.getRun", (ctx) => routine.getRun(ctx.params.runID))
+      .handle("experimental.routine.cancelRun", (ctx) => routine.cancelRun(ctx.params.runID))
       .handle(
         "persistentPty.read",
         Effect.fn(function* (ctx) {
