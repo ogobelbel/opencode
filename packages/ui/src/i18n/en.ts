@@ -275,6 +275,13 @@ const source = {
   "ui.permission.allowAlways": "Allow always",
   "ui.permission.allowOnce": "Allow once",
 
+  "ui.subagentCard.title": "New session",
+  "ui.subagentCard.dismiss": "Dismiss",
+  "ui.subagentCard.options": "Options",
+  "ui.subagentCard.model": "Model",
+  "ui.subagentCard.here": "Do it here",
+  "ui.subagentCard.start": "Start",
+
   "ui.message.expand": "Expand message",
   "ui.message.collapse": "Collapse message",
   "ui.message.copy": "Copy",

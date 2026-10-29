@@ -13,6 +13,7 @@ import { makeGlobalNode, makeLocationNode } from "@opencode/util/effect/app-node
 import { Database } from "@opencode/core/database/database"
 import { Bus } from "@opencode/core/bus"
 import { Config } from "@opencode/core/config"
+import { Form } from "@opencode/core/form"
 import { Location } from "@opencode/core/location"
 import { Model } from "@opencode/core/model"
 import { Provider } from "@opencode/core/provider"
@@ -123,6 +124,7 @@ const subagentPluginSupervisor = makeLocationNode({
   deps: [
     Agent.node,
     Config.node,
+    Form.node,
     Model.node,
     Permission.node,
     Session.node,

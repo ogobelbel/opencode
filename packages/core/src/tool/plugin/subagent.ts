@@ -6,6 +6,7 @@ import type { SessionHooks } from "@opencode/plugin/effect/session"
 import { Effect, Predicate, Schema } from "effect"
 import { Agent } from "../../agent.js"
 import { Config } from "../../config.js"
+import { Form } from "../../form.js"
 import { Job } from "../../job.js"
 import { Model } from "../../model.js"
 import { Permission } from "../../permission.js"
@@ -15,6 +16,9 @@ import { SubagentCompletion } from "../../session/subagent-completion.js"
 import { SubagentJob } from "../../session/subagent-job.js"
 
 export const name = "subagent"
+
+const modelRef = (ref: { providerID: string; id: string; variant?: string }) =>
+  `${ref.providerID}/${ref.id}${ref.variant ? `#${ref.variant}` : ""}`
 
 const backgroundResult = (sessionID: SessionSchema.ID) => ({
   sessionID,
@@ -48,8 +52,8 @@ export const Input = Schema.Struct({
 })
 
 export const Output = Schema.Struct({
-  sessionID: SessionSchema.ID,
-  status: Schema.Literals(["completed", "running"]),
+  sessionID: Schema.optionalKey(SessionSchema.ID),
+  status: Schema.Literals(["completed", "running", "declined"]),
   output: Schema.String,
 })
 export const description = [
@@ -71,6 +75,7 @@ export const Plugin = {
     const permission = yield* Permission.Service
     const models = yield* Model.Service
     const subagents = yield* SubagentJob.Service
+    const forms = yield* Form.Service
 
     const resolveModel = Effect.fn("SubagentTool.resolveModel")(function* (input: string) {
       const ref = yield* Effect.try({
@@ -150,6 +155,52 @@ export const Plugin = {
                 })
                 .pipe(Effect.mapError((error) => new ToolFailure({ message: `Subagent denied: ${agent.id}`, error })))
 
+              const requested = input.model === undefined ? undefined : yield* resolveModel(input.model)
+              const preferred = requested ?? agent.model ?? parent.model
+              // A task the user asked for waits for them to start it, with a model of its own. Research agents,
+              // continuations, and background runs keep going without a prompt.
+              const confirm =
+                agent.id === "general" && input.sessionID === undefined && input.background !== true
+              const decision = confirm
+                ? yield* forms
+                    .ask({
+                      sessionID: context.sessionID,
+                      title: input.description,
+                      metadata: {
+                        kind: "subagent",
+                        tool: { messageID: context.messageID, id: context.id },
+                        description: input.description,
+                        prompt: input.prompt,
+                        agent: agent.id,
+                        model: preferred === undefined ? undefined : modelRef(preferred),
+                      },
+                      fields: [
+                        {
+                          key: "model",
+                          type: "string",
+                          title: "Model",
+                          default: preferred === undefined ? undefined : modelRef(preferred),
+                        },
+                        { key: "action", type: "string", title: "Action", default: "start" },
+                      ],
+                    })
+                    .pipe(Effect.orDie)
+                : undefined
+
+              const action = decision?.status === "answered" ? decision.answer.action : undefined
+              if (decision?.status === "cancelled" || action === "here")
+                return {
+                  status: "declined" as const,
+                  output:
+                    decision?.status === "cancelled"
+                      ? "The user dismissed the request. Do not retry; wait for their next instruction."
+                      : "The user asked to do this in the current session. Continue here instead of spawning a subagent.",
+                }
+
+              const picked = decision?.status === "answered" ? decision.answer.model : undefined
+              const override =
+                typeof picked === "string" && picked.length > 0 ? yield* resolveModel(picked) : requested
+
               const existing =
                 input.sessionID === undefined
                   ? undefined
@@ -165,7 +216,6 @@ export const Plugin = {
                 return yield* new ToolFailure({
                   message: `Session ${existing.id} is not a child of the current session`,
                 })
-              const override = input.model === undefined ? undefined : yield* resolveModel(input.model)
               // Continuing with a different agent switches the child, mirroring create semantics
               // where an explicit model wins over the agent's configured model, which wins over the inherited one.
               if (existing !== undefined) {

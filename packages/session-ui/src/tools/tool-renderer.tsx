@@ -18,13 +18,14 @@ import {
 } from "solid-js"
 import { createStore } from "solid-js/store"
 import { createResizeObserver } from "@solid-primitives/resize-observer"
-import { Effect, Option, Schema } from "effect"
+import { Effect, Option, Predicate, Schema } from "effect"
 import { createTwoFilesPatch, diffLines } from "diff"
 import { Dynamic } from "solid-js/web"
 import { type SessionSummary, useData } from "../context"
 import { useFileComponent } from "@opencode/ui/context/file"
 import { type UiI18n, useI18n } from "@opencode/ui/context/i18n"
 import { BasicTool, GenericTool } from "../components/basic-tool"
+import { SubagentStartCard } from "./subagent-start-card"
 import { FileIcon } from "@opencode/ui/file-icon"
 import { Icon } from "@opencode/ui/icon"
 import { ToolErrorCard } from "../components/tool-error-card"
@@ -1367,10 +1368,29 @@ export function ToolDisplay(
   const error = createMemo(() => toolDisplayError(props))
   const render = createMemo(() => ToolRegistry.render(props.tool) ?? GenericTool)
 
+  // The subagent tool waits on a form while the user picks a model and starts the child; the card replaces its row.
+  const pendingSubagent = createMemo(() => {
+    if (props.tool !== "subagent") return
+
+    const sessionID = data.sessionID
+    const forms = data.form
+
+    if (!sessionID || !forms) return
+
+    return forms.list(sessionID)?.find((item) => {
+      if (item.metadata?.kind !== "subagent") return false
+
+      const tool = item.metadata.tool
+
+      return !!tool && Predicate.hasProperty(tool, "id") && tool.id === props.id
+    })
+  })
+
   return (
     <Show when={!hideQuestion()}>
       <div data-component="tool-part-wrapper" data-timeline-part-id={props.id}>
         <Switch>
+          <Match when={pendingSubagent()}>{(form) => <SubagentStartCard form={form()} />}</Match>
           <Match when={error()}>
             {(error) => {
               const cleaned = error().replace("Error: ", "")

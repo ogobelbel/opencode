@@ -15,6 +15,7 @@ import {
 } from "solid-js"
 import { createStore } from "solid-js/store"
 import { useLocal, type ModelSelection } from "@/providers/models/selection"
+import type { ModelPickerRef } from "@opencode/ui/context/model-picker"
 import { isFreeModel } from "@/providers/models/models"
 import { useDialog } from "@opencode/ui/context/dialog"
 import { popularProviders } from "@/providers/catalog/providers"
@@ -456,6 +457,8 @@ function ModelDrawer(props: {
 function createModelSelectorController(input: {
   provider: () => string | undefined
   model?: ModelState
+  current?: ModelPickerRef
+  onPick?: (ref: ModelPickerRef) => void
   onSelect: () => void
 }) {
   const model = input.model ?? useLocal().model
@@ -488,11 +491,20 @@ function createModelSelectorController(input: {
       return Array.from(byProvider, ([category, items]) => ({ category, items })).sort(sortModelGroups)
     },
     current: () => {
+      if (input.current) return `${input.current.providerID}:${input.current.modelID}`
+
       const value = model.current()
 
       return value ? modelKey(value) : undefined
     },
     select: (item: ModelItem, variant?: string | null) => {
+      if (input.onPick) {
+        input.onPick({ providerID: item.provider.id, modelID: item.id, variant: variant ?? undefined })
+        input.onSelect()
+
+        return
+      }
+
       model.set({ modelID: item.id, providerID: item.provider.id }, { recent: true })
 
       if (variant !== undefined) model.variant.set(variant ?? undefined)
@@ -609,12 +621,19 @@ function ChatgptPlanFooter() {
   )
 }
 
-export function DialogSelectModelNext(props: { provider?: string; model?: ModelState }) {
+export function DialogSelectModelNext(props: {
+  provider?: string
+  model?: ModelState
+  current?: ModelPickerRef
+  onPick?: (ref: ModelPickerRef) => void
+}) {
   const dialog = useDialog()
   const language = useLanguage()
 
   const controller = createModelSelectorController({
     model: props.model,
+    current: props.current,
+    onPick: props.onPick,
     provider: () => props.provider,
     onSelect: () => dialog.close(),
   })

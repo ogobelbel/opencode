@@ -1,5 +1,6 @@
 import type {
   FileDiffInfo,
+  FormInfo,
   SessionInfo,
   SessionStatus,
   ShellOutputInput,
@@ -51,6 +52,17 @@ export type NavigateToSessionFn = (sessionID: string) => void
 
 export type SessionHrefFn = (sessionID: string) => string
 
+/** The pending prompts a tool can wait on, and how to settle one from the transcript. */
+export type FormBridge = {
+  list(sessionID: string): readonly FormInfo[] | undefined
+  reply(input: {
+    sessionID: string
+    formID: string
+    answer: Record<string, string | number | boolean | readonly string[]>
+  }): Promise<void>
+  cancel(input: { sessionID: string; formID: string }): Promise<void>
+}
+
 export const { use: useData, provider: DataProvider } = createSimpleContext({
   name: "Data",
   init: (props: {
@@ -62,6 +74,7 @@ export const { use: useData, provider: DataProvider } = createSimpleContext({
     shellRunning?: (id: string) => boolean
     shellOutput?: (input: ShellOutputInput) => Promise<ShellOutputOutput>
     turnDiff?: TurnDiffSource
+    form?: FormBridge
     onNavigateToSession?: NavigateToSessionFn
     onSessionHref?: SessionHrefFn
     /** Whether `experimental.background_compaction` is on for this location; automatic compactions then show quietly. */
@@ -88,6 +101,7 @@ export const { use: useData, provider: DataProvider } = createSimpleContext({
       shellRunning: props.shellRunning,
       shellOutput: props.shellOutput,
       turnDiff: props.turnDiff,
+      form: props.form,
     }
   },
 })

@@ -5,6 +5,9 @@ import { useQuery } from "@tanstack/solid-query"
 import { createMemo, onCleanup, type ParentProps } from "solid-js"
 import { useProviders } from "@/providers/catalog/providers"
 import { LocalProvider } from "@/providers/models/selection"
+import { DialogSelectModelNext } from "@/providers/models/select-dialog-next"
+import { useDialog } from "@opencode/ui/context/dialog"
+import { ModelPickerProvider, type ModelPicker } from "@opencode/ui/context/model-picker"
 import type { ServerConnection } from "@/runtime/server/registry"
 import { sessionHref } from "@/shell/routes/session"
 import { useData } from "@/runtime/server/current"
@@ -29,7 +32,12 @@ export function SessionUIProvider(
   const tabs = useTabs()
   const language = useLanguage()
   const settings = useSettings()
+  const dialog = useDialog()
   const directory = () => props.directory
+
+  // The transcript's subagent card picks a model for that child without touching the composer's own selection.
+  const openModelPicker: ModelPicker = (input) =>
+    dialog.show(() => <DialogSelectModelNext current={input.current} onPick={input.onPick} />)
 
   const readImage = createMemo<ReadMarkdownImage>(() => {
     const dir = directory()
@@ -129,25 +137,28 @@ export function SessionUIProvider(
 
   return (
     <LocalProvider>
-      <DataProvider
-        data={sessionUIData()}
-        directory={directory()}
-        sessionID={params.id}
-        agents={settings.visibility.customAgents()}
-        shellRunning={(id) => !!data.shell.get(id)}
-        shellOutput={(input) => serverSDK.api.shell.output(input)}
-        turnDiff={{
-          get: (input) => turnDiffs()?.get(input),
-          load: (input) => turnDiffs()?.load(input, () => serverSDK.api.session.diff(input)),
-        }}
-        onNavigateToSession={navigateToSession}
-        onSessionHref={href}
-        backgroundCompaction={backgroundCompaction()}
-      >
-        <MarkdownProvider readImage={readImage()} openSession={openReferencedSession} sessionTitle={sessionTitle}>
-          {props.children}
-        </MarkdownProvider>
-      </DataProvider>
+      <ModelPickerProvider open={openModelPicker}>
+        <DataProvider
+          data={sessionUIData()}
+          directory={directory()}
+          sessionID={params.id}
+          agents={settings.visibility.customAgents()}
+          shellRunning={(id) => !!data.shell.get(id)}
+          shellOutput={(input) => serverSDK.api.shell.output(input)}
+          form={data.session.form}
+          turnDiff={{
+            get: (input) => turnDiffs()?.get(input),
+            load: (input) => turnDiffs()?.load(input, () => serverSDK.api.session.diff(input)),
+          }}
+          onNavigateToSession={navigateToSession}
+          onSessionHref={href}
+          backgroundCompaction={backgroundCompaction()}
+        >
+          <MarkdownProvider readImage={readImage()} openSession={openReferencedSession} sessionTitle={sessionTitle}>
+            {props.children}
+          </MarkdownProvider>
+        </DataProvider>
+      </ModelPickerProvider>
     </LocalProvider>
   )
 }
