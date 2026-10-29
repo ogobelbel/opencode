@@ -1,4 +1,4 @@
-import { Show, createMemo, type ComponentProps, type JSX } from "solid-js"
+import { Show, createMemo, createSignal, onCleanup, type ComponentProps, type JSX } from "solid-js"
 import { ProgressCircle } from "@opencode/ui/progress-circle"
 import { Button } from "@opencode/ui/button"
 import { Tooltip } from "@opencode/ui/tooltip"
@@ -6,6 +6,10 @@ import { useI18n } from "@opencode/ui/context/i18n"
 import { lastAssistantWithUsage } from "@opencode/client/solid"
 import { usePlugin, type MountedSession } from "@opencode/plugin/gui"
 import { catalogModel, syncCatalog } from "./catalog"
+import { deepseekRate } from "./off-peak"
+
+// DeepSeek's schedule only changes at the hour, so a slower clock is enough to keep the dot honest.
+const RATE_CLOCK = 15_000
 
 function ContextTooltipRow(props: { name: JSX.Element; value: JSX.Element }) {
   return (
@@ -27,6 +31,27 @@ export function SessionContextUsage(props: {
   syncCatalog(() => props.session)
 
   const variant = createMemo(() => props.variant ?? "button")
+
+  // DeepSeek bills peak and off-peak rates on a UTC schedule, so the dot follows the clock rather than the session.
+  const [clock, setClock] = createSignal(Date.now())
+  const rateClock = setInterval(() => setClock(Date.now()), RATE_CLOCK)
+  onCleanup(() => clearInterval(rateClock))
+
+  const rate = createMemo(() => deepseekRate(new Date(clock())))
+
+  const untilChange = createMemo(() => {
+    // Rounded up so a change is never announced as "0m" before it happens.
+    const minutes = Math.max(1, Math.ceil((rate().nextChange - clock()) / 60_000))
+
+    const unit = (value: number, name: "hour" | "minute") =>
+      new Intl.NumberFormat(i18n.locale(), { style: "unit", unit: name, unitDisplay: "narrow" }).format(value)
+
+    if (minutes < 60) return unit(minutes, "minute")
+
+    const rest = minutes % 60
+
+    return rest ? `${unit(Math.floor(minutes / 60), "hour")} ${unit(rest, "minute")}` : unit(minutes / 60, "hour")
+  })
 
   const messages = createMemo(() =>
     props.session.id ? props.session.server.data.session.message.list(props.session.id) : [],
@@ -113,8 +138,34 @@ export function SessionContextUsage(props: {
     </div>
   )
 
+  const rateDot = () => (
+    <span
+      aria-hidden="true"
+      class="size-1.5 shrink-0 rounded-full"
+      style={{
+        background: rate().peak ? "var(--v2-state-fg-danger)" : "var(--v2-state-fg-success)",
+      }}
+    />
+  )
+
+  const rateRow = () => (
+    <ContextTooltipRow
+      name={rate().peak ? ctx.t("usage.rate.peak") : ctx.t("usage.rate.offPeak")}
+      value={ctx.t("usage.rate.until", { time: untilChange() })}
+    />
+  )
+
+  // The button's tooltip carries the rate and what a click does; the tab label already shows the session's numbers.
+  const buttonTooltip = () => (
+    <div class="flex w-[180px] flex-col gap-2">
+      {rateRow()}
+      <div class="text-v2-text-text-muted">{ctx.t("usage.toggle")}</div>
+    </div>
+  )
+
   const tooltipValue = () => (
     <div class="flex w-[120px] flex-col gap-2">
+      {rateRow()}
       <Show when={showCost()}>
         <ContextTooltipRow name={ctx.t("usage.cost")} value={cost()} />
       </Show>
@@ -126,7 +177,7 @@ export function SessionContextUsage(props: {
   return (
     <Show when={props.session.id}>
       <Tooltip
-        value={variant() === "indicator" ? tooltipValue() : ctx.t("usage.toggle")}
+        value={variant() === "indicator" ? tooltipValue() : buttonTooltip()}
         placement={props.placement ?? "top"}
       >
         <Show
@@ -142,7 +193,10 @@ export function SessionContextUsage(props: {
               aria-label={ctx.t("usage.toggle")}
             >
               <span class="flex items-center gap-2 whitespace-nowrap group-active:text-v2-text-text-muted">
-                {compactCircle()}
+                <span class="flex items-center gap-1.5">
+                  {rateDot()}
+                  {compactCircle()}
+                </span>
                 <span>{tokens()}</span>
                 <Show when={showCost()}>
                   <span aria-hidden="true" class="flex w-1.5 shrink-0 items-center justify-center">
