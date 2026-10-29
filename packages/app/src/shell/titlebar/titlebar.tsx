@@ -278,6 +278,7 @@ export function Titlebar(props: { verticalTabs?: { mount?: HTMLElement } }) {
                 case "settings":
                 case "connect":
                 case "components":
+                case "routines":
                 case "home": {
                   const selection = layout.home.selection()
 
@@ -382,6 +383,45 @@ export function Titlebar(props: { verticalTabs?: { mount?: HTMLElement } }) {
               </Show>
             )
 
+            const loadRoutines = () => {
+              if (layout.route().type !== "routines") navigate("/routines")
+            }
+
+            const routinesButton = (vertical = false) => (
+              <Show
+                when={vertical}
+                fallback={
+                  <Tooltip placement="bottom" value={language.t("routines.title")} class="shrink-0">
+                    <IconButton
+                      type="button"
+                      variant="ghost-muted"
+                      size="large"
+                      class="!w-9 shrink-0"
+                      icon={<Icon name="outline-rotate-clockwise" />}
+                      state={layout.route().type === "routines" ? "pressed" : undefined}
+                      onClick={loadRoutines}
+                      aria-label={language.t("routines.title")}
+                      aria-pressed={layout.route().type === "routines"}
+                    />
+                  </Tooltip>
+                }
+              >
+                <button
+                  type="button"
+                  data-titlebar-tab-action
+                  data-action="vertical-tabs-routines"
+                  data-state={layout.route().type === "routines" ? "pressed" : undefined}
+                  class="group flex h-7 w-full shrink-0 items-center gap-1.5 rounded-[6px] ps-1.5 pe-2 text-[13px] leading-4 text-v2-text-text-faint hover:text-v2-text-text-base data-[state=pressed]:text-v2-text-text-base"
+                  onClick={loadRoutines}
+                  aria-label={language.t("routines.title")}
+                  aria-pressed={layout.route().type === "routines"}
+                >
+                  <Icon name="outline-rotate-clockwise" class="shrink-0" />
+                  <span class="min-w-0 truncate">{language.t("routines.title")}</span>
+                </button>
+              </Show>
+            )
+
             const searchButton = (vertical = false) => (
               <Show
                 when={vertical}
@@ -445,6 +485,12 @@ export function Titlebar(props: { verticalTabs?: { mount?: HTMLElement } }) {
                   const { DialogSessionSearch } = await import("@/shell/commands/session-search")
                   void dialog.show(() => <DialogSessionSearch />)
                 },
+              },
+              {
+                id: "routines.open",
+                title: language.t("routines.title"),
+                category: language.t("command.category.view"),
+                onSelect: loadRoutines,
               },
             ])
 
@@ -593,6 +639,7 @@ export function Titlebar(props: { verticalTabs?: { mount?: HTMLElement } }) {
                   {/* Pulls the first tab's avatar 10px from Search, past the row gap plus the tab's own inset. */}
                   <div class="-me-0.5 flex shrink-0 items-center gap-0.5">
                     {homeButton()}
+                    {routinesButton()}
                     {searchButton()}
                   </div>
                 </Show>
@@ -799,6 +846,7 @@ export function Titlebar(props: { verticalTabs?: { mount?: HTMLElement } }) {
                             </Show>
                             <div class="flex w-full shrink-0 flex-col gap-[3px]">
                               <Show when={!homeInSidebarHeader()}>{homeButton(true)}</Show>
+                              {routinesButton(true)}
                               {searchButton(true)}
                               <RecentlyClosedTabsMenu
                                 vertical
