@@ -935,6 +935,7 @@ export type RoutineInfo = {
   prompt: string
   mode: RoutineMode
   model: RoutineModel
+  worktree?: boolean
   timeoutSeconds?: number
   maxParallel?: number
   tags: Array<string>
@@ -953,6 +954,7 @@ export type RoutineRun = {
   worktreePath?: string
   branch?: string
   diff?: RoutineDiff
+  summary?: string
   time: RoutineRunTime
 }
 
@@ -4511,6 +4513,7 @@ export type ExperimentalRoutineCreateInput = {
   readonly prompt: string
   readonly mode: "yolo" | "read_only"
   readonly model: { readonly providerID: string; readonly modelID: string; readonly variant?: string }
+  readonly worktree?: boolean | undefined
   readonly timeoutSeconds?: number | undefined
   readonly maxParallel?: number | undefined
   readonly tags?: ReadonlyArray<string> | undefined
@@ -4530,6 +4533,7 @@ export type ExperimentalRoutineUpdateInput = {
   readonly prompt?: string | undefined
   readonly mode?: ("yolo" | "read_only") | undefined
   readonly model?: { readonly providerID: string; readonly modelID: string; readonly variant?: string } | undefined
+  readonly worktree?: boolean | undefined
   readonly timeoutSeconds?: number | undefined
   readonly maxParallel?: number | undefined
   readonly tags?: ReadonlyArray<string> | undefined
