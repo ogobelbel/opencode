@@ -1,6 +1,7 @@
 import type { ExperimentalRoutineCreateInput, RoutineInfo, RoutineMode, RoutineModel } from "@opencode/client/promise"
 import { Button } from "@opencode/ui/button"
 import { Select } from "@opencode/ui/select"
+import { Switch } from "@opencode/ui/switch"
 import { TextInput } from "@opencode/ui/text-input"
 import { Textarea } from "@opencode/ui/textarea"
 import { createStore } from "solid-js/store"
@@ -20,14 +21,13 @@ type EditorState = {
   model: RoutineModel
   variant: string
   mode: RoutineMode
+  worktree: boolean
   timeoutSeconds: string
   maxParallel: string
   tags: string
 }
 
 const modes: RoutineMode[] = ["yolo", "read_only"]
-
-const variants = ["", "low", "medium", "high"]
 
 const optionalNumber = (value: string) => {
   const parsed = Number(value)
@@ -58,6 +58,7 @@ export function RoutineEditor(props: {
     model: props.routine?.model ?? props.defaultModel,
     variant: props.routine?.model.variant ?? "",
     mode: props.routine?.mode ?? "read_only",
+    worktree: props.routine?.worktree ?? false,
     timeoutSeconds: props.routine?.timeoutSeconds?.toString() ?? "",
     maxParallel: props.routine?.maxParallel?.toString() ?? "",
     tags: props.routine?.tags.join(", ") ?? "",
@@ -76,6 +77,7 @@ export function RoutineEditor(props: {
       when: { cron: form.cron.trim(), tz: form.tz.trim() },
       prompt: form.prompt,
       mode: form.mode,
+      worktree: form.worktree,
       model: { ...form.model, variant: form.variant || undefined },
       timeoutSeconds: optionalNumber(form.timeoutSeconds),
       maxParallel: optionalNumber(form.maxParallel),
@@ -200,14 +202,11 @@ export function RoutineEditor(props: {
           <span class="text-[13px] leading-[var(--line-height-compact)] text-v2-text-text-muted">
             {language.t("routines.editor.variant")}
           </span>
-          <Select
+          <TextInput
             class="!w-full"
-            options={variants}
-            current={form.variant}
-            value={(variant) => variant}
-            label={(variant) => variant || language.t("routines.editor.variant.default")}
-            onSelect={(variant) => setForm("variant", variant ?? "")}
-            aria-label={language.t("routines.editor.variant")}
+            value={form.variant}
+            placeholder={language.t("routines.editor.variant.placeholder")}
+            onInput={(event) => setForm("variant", event.currentTarget.value)}
           />
         </label>
 
@@ -238,6 +237,19 @@ export function RoutineEditor(props: {
             onInput={(event) => setForm("maxParallel", event.currentTarget.value)}
           />
         </label>
+
+        <div class="flex flex-col gap-1.5 md:col-span-2">
+          <Switch
+            checked={form.worktree}
+            onChange={(checked) => setForm("worktree", checked)}
+            aria-label={language.t("routines.editor.worktree")}
+          >
+            {language.t("routines.editor.worktree")}
+          </Switch>
+          <span class="text-[13px] leading-[var(--line-height-compact)] text-v2-text-text-muted">
+            {language.t("routines.editor.worktree.hint")}
+          </span>
+        </div>
 
         <label class="flex flex-col gap-1.5 md:col-span-2">
           <span class="text-[13px] leading-[var(--line-height-compact)] text-v2-text-text-muted">
