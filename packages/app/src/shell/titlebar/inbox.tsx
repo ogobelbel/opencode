@@ -34,6 +34,7 @@ import { createSessionExporter } from "@/session/commands/export-session"
 import { SessionReadMenuItem } from "@/session/session-read-menu-item"
 import { RenameDialog } from "./project-session-row"
 import { createSessionInbox, inboxArchived, type InboxEntry, type InboxStatus } from "./inbox-model"
+import { isRoutineSession } from "./inbox-routines"
 import { compareWorking, workingSince } from "./inbox-working"
 
 const RECENT_LIMIT = 10
@@ -58,6 +59,9 @@ export function SidebarInbox() {
     workingExpanded: true,
     recentExpanded: false,
   })
+
+  // Routine chats are collapsed by default so they stop crowding normal sessions.
+  const [ui, setUi] = createStore({ routinesExpanded: false })
 
   const [announcement, setAnnouncement] = createStore({ text: "" })
 
@@ -105,9 +109,11 @@ export function SidebarInbox() {
 
   const sections = createMemo(() => {
     const list = inbox.entries()
+    const routines = list.filter((entry) => isRoutineSession(entry.session))
+    const normal = list.filter((entry) => !isRoutineSession(entry.session))
 
     // Archived sessions are available through the Archived search dialog, not in the sidebar list.
-    const active = list.filter((entry) => !inboxArchived(entry))
+    const active = normal.filter((entry) => !inboxArchived(entry))
 
     const needs = active
       .filter((entry) => entry.status === "approval" || entry.status === "input")
@@ -137,7 +143,48 @@ export function SidebarInbox() {
           : [],
       archived: list.some(inboxArchived),
       working,
+      routines,
+      routinesAttention: routines.some((entry) => entry.status === "approval" || entry.status === "input"),
     }
+  })
+
+  const routinesOpen = () => ui.routinesExpanded
+
+  // Open the group once when a routine starts waiting on a person; after that the toggle is authoritative.
+  let routineAttention = 0
+  createEffect(() => {
+    const count = sections().routines.filter(
+      (entry) => entry.status === "approval" || entry.status === "input",
+    ).length
+
+    if (count > routineAttention) setUi("routinesExpanded", true)
+
+    routineAttention = count
+  })
+
+  // A routine run is bound to one project, so group its chats under that project's name.
+  const routineGroups = createMemo(() => {
+    const groups = new Map<string, { label: string; entries: InboxEntry[] }>()
+
+    for (const entry of sections().routines) {
+      const project = entry.ctx.projects.forSession(entry.session)
+      const key = project?.worktree ?? entry.session.location.directory
+      const group = groups.get(key)
+
+      if (group) {
+        group.entries.push(entry)
+        continue
+      }
+
+      groups.set(key, {
+        label: displayName(project ?? { worktree: entry.session.location.directory }),
+        entries: [entry],
+      })
+    }
+
+    return [...groups.entries()]
+      .toSorted((a, b) => a[1].label.localeCompare(b[1].label))
+      .map(([key, group]) => ({ key, ...group }))
   })
 
   const selectedWorking = createMemo(() => sections().working.find((entry) => inbox.selected(entry))?.key)
@@ -160,7 +207,14 @@ export function SidebarInbox() {
   createEffect(() => {
     const visible = sections()
 
-    inbox.loadBranches([...visible.needs, ...visible.current, ...visible.working, ...visible.unread, ...visible.recent])
+    inbox.loadBranches([
+      ...visible.needs,
+      ...visible.current,
+      ...visible.working,
+      ...visible.unread,
+      ...visible.recent,
+      ...visible.routines,
+    ])
   })
 
   // Takes an accessor so only the For tracks the section. Reading it here would recreate the For, remounting every
@@ -177,6 +231,7 @@ export function SidebarInbox() {
               status={entry().status}
               server={servers.tag(entry().conn)}
               since={entry().since}
+              routine={isRoutineSession(entry().session)}
               selected={inbox.selected(entry())}
               now={inbox.now(entry().status)}
               branch={inbox.branch(entry())}
@@ -225,8 +280,37 @@ export function SidebarInbox() {
     </For>
   )
 
-  // Render slots inside InboxNavigation without recreating section objects on updates.
   const groups = [
+    {
+      id: "routines",
+      get label() {
+        return language.t("sidebar.inbox.section.routines")
+      },
+      get count() {
+        return sections().routines.length
+      },
+      get attention() {
+        return sections().routinesAttention
+      },
+      get expanded() {
+        return routinesOpen()
+      },
+      onToggle: () => setUi("routinesExpanded", !ui.routinesExpanded),
+      rows: () => (
+        <Show when={routinesOpen()}>
+          <For each={routineGroups()}>
+            {(group) => (
+              <div class="flex flex-col gap-0.5">
+                <div class="flex h-5 items-center px-1.5 text-[11px] leading-4 font-medium text-v2-text-text-faint">
+                  <span class="min-w-0 truncate">{group.label}</span>
+                </div>
+                {rows(() => group.entries)}
+              </div>
+            )}
+          </For>
+        </Show>
+      ),
+    },
     {
       id: "needs",
       get label() {
@@ -343,7 +427,16 @@ export function InboxSessionList(props: {
   loading?: boolean
   announcement?: string
   current: { count: number; rows: () => JSX.Element }
-  sections: { id: string; label: string; count: number; rows: () => JSX.Element; more?: () => JSX.Element }[]
+  sections: {
+    id: string
+    label: string
+    count: number
+    rows: () => JSX.Element
+    more?: () => JSX.Element
+    attention?: boolean
+    expanded?: boolean
+    onToggle?: () => void
+  }[]
   working: { count: number; rows: () => JSX.Element; expanded: boolean; onToggle: () => void }
   archived: boolean
   onArchived: () => void
@@ -452,7 +545,13 @@ export function InboxSessionList(props: {
               {(section) => (
                 <Show when={section.count > 0}>
                   <div role="group" aria-labelledby={`${id}-${section.id}`} class="flex shrink-0 flex-col gap-2 pb-2.5">
-                    <SectionHeader id={`${id}-${section.id}`} label={section.label} />
+                    <SectionHeader
+                      id={`${id}-${section.id}`}
+                      label={section.label}
+                      expanded={section.expanded}
+                      attention={section.attention}
+                      onToggle={section.onToggle}
+                    />
                     <div class="flex flex-col gap-0.5">{section.rows()}</div>
                     {section.more?.()}
                   </div>
@@ -524,6 +623,7 @@ function SectionHeader(props: {
   label: string
   expanded?: boolean
   shimmer?: boolean
+  attention?: boolean
   onToggle?: () => void
 }) {
   const content = (): JSX.Element => (
@@ -533,13 +633,20 @@ function SectionHeader(props: {
           <TextShimmer text={props.label} active />
         </Show>
       </span>
-      <Show when={props.onToggle}>
-        <Icon
-          name="fill-triangle-down"
-          size="small"
-          class="shrink-0 transition-transform"
-          classList={{ "-rotate-90 rtl:rotate-90": !props.expanded }}
-        />
+      <Show when={props.attention || props.onToggle}>
+        <span class="ms-auto flex shrink-0 items-center gap-1">
+          <Show when={props.attention}>
+            <span class="size-1.5 rounded-full bg-v2-state-fg-warning" aria-hidden="true" />
+          </Show>
+          <Show when={props.onToggle}>
+            <Icon
+              name="fill-triangle-down"
+              size="small"
+              class="shrink-0 transition-transform"
+              classList={{ "-rotate-90 rtl:rotate-90": !props.expanded }}
+            />
+          </Show>
+        </span>
       </Show>
     </>
   )
@@ -578,6 +685,7 @@ export function InboxSessionCard(props: {
   status: InboxStatus
   server?: string
   since: number | undefined
+  routine?: boolean
   selected: boolean
   now: number
   branch: string | undefined
@@ -636,11 +744,19 @@ export function InboxSessionCard(props: {
       >
         <span class="flex h-4 w-full min-w-0 shrink-0 items-center gap-2">
           <span class="flex size-4 shrink-0 items-center justify-center">
-            <SessionTabAvatarView project={props.project} directory={props.directory} unread={false} />
+            <Show
+              when={props.routine}
+              fallback={
+                <SessionTabAvatarView project={props.project} directory={props.directory} unread={false} />
+              }
+            >
+              <Icon name="outline-rotate-clockwise" size="small" class="text-v2-text-text-accent" />
+            </Show>
           </span>
           <span
             dir="auto"
             class="min-w-0 flex-1 truncate text-[13px] leading-4 font-medium tracking-[-0.04px] text-v2-text-text-base"
+            classList={{ "text-v2-text-text-accent": props.routine }}
           >
             {sessionTabTitle(props.title, language.t("session.tab.session"))}
           </span>
