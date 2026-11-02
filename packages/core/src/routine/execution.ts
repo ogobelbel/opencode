@@ -13,16 +13,18 @@ export const modelRef = (model: Routine.Model) =>
     ...(model.variant === undefined ? {} : { variant: Model.VariantID.make(model.variant) }),
   })
 
-export const permissions = (mode: Routine.Mode): Permission.Ruleset =>
-  mode === "yolo"
+export const permissions = (mode: Routine.Mode, extra: Permission.Ruleset = []): Permission.Ruleset => [
+  ...(mode === "yolo"
     ? [
-        { action: "*", resource: "*", effect: "allow" },
-        { action: "question", resource: "*", effect: "deny" },
+        { action: "*", resource: "*", effect: "allow" as const },
+        { action: "question", resource: "*", effect: "deny" as const },
       ]
     : [
-        { action: "*", resource: "*", effect: "deny" },
+        { action: "*", resource: "*", effect: "deny" as const },
         ...["read", "grep", "glob", "list"].map((action) => ({ action, resource: "*", effect: "allow" as const })),
-      ]
+      ]),
+  ...extra,
+]
 
 const SUMMARY_MAX_CHARS = 4_000
 

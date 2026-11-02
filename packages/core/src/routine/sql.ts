@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm"
 import { index, integer, sqliteTable, text } from "drizzle-orm/sqlite-core"
+import type { Permission } from "@opencode/schema/permission"
 import type { Routine } from "@opencode/schema/routine"
 import { Timestamps } from "../database/schema.sql.js"
 
@@ -16,6 +17,7 @@ export const RoutineTable = sqliteTable(
     prompt: text().notNull(),
     mode: text().$type<Routine.Mode>().notNull(),
     model: text({ mode: "json" }).$type<Routine.Model>().notNull(),
+    permissions: text({ mode: "json" }).$type<Permission.Ruleset>(),
     worktree: integer({ mode: "boolean" }).notNull().default(false),
     timeout_seconds: integer(),
     max_parallel: integer(),

@@ -96,6 +96,7 @@ const toInfo = (row: Row): Info => ({
   prompt: row.prompt,
   mode: row.mode,
   model: row.model,
+  permissions: row.permissions ?? undefined,
   worktree: row.worktree ? true : undefined,
   timeoutSeconds: row.timeout_seconds ?? undefined,
   maxParallel: row.max_parallel ?? undefined,
@@ -266,7 +267,9 @@ const layer = Layer.effect(
           location: { directory: AbsolutePath.make(worktree ? worktree.directory : routine.directory) },
           title: `Routine: ${routine.title}`,
           model: modelRef(routine.model),
-          permissions: permissions(routine.mode),
+          permissions: permissions(routine.mode, routine.permissions ?? []),
+          // Lets the inbox group routine sessions apart from normal work, even if the title is edited later.
+          metadata: { routine: { id: routine.id, title: routine.title } },
         })
         yield* db
           .update(RoutineRunTable)
@@ -446,6 +449,7 @@ const layer = Layer.effect(
             prompt: input.prompt,
             mode: input.mode,
             model: input.model,
+            permissions: input.permissions ?? null,
             worktree: input.worktree ?? false,
             timeout_seconds: input.timeoutSeconds ?? null,
             max_parallel: input.maxParallel ?? null,
@@ -488,6 +492,7 @@ const layer = Layer.effect(
             prompt: input.prompt ?? row.prompt,
             mode: input.mode ?? row.mode,
             model: input.model ?? row.model,
+            permissions: input.permissions ?? row.permissions,
             worktree: input.worktree ?? row.worktree,
             timeout_seconds: input.timeoutSeconds ?? row.timeout_seconds,
             max_parallel: input.maxParallel ?? row.max_parallel,
@@ -521,6 +526,7 @@ const layer = Layer.effect(
             prompt: row.prompt,
             mode: row.mode,
             model: row.model,
+            permissions: row.permissions,
             worktree: row.worktree,
             timeout_seconds: row.timeout_seconds,
             max_parallel: row.max_parallel,

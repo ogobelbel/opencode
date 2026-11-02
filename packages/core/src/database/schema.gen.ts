@@ -144,6 +144,7 @@ const schema: Omit<DatabaseMigration.Migration, "id"> = {
           \`prompt\` text NOT NULL,
           \`mode\` text NOT NULL,
           \`model\` text NOT NULL,
+          \`permissions\` text,
           \`worktree\` integer DEFAULT false NOT NULL,
           \`timeout_seconds\` integer,
           \`max_parallel\` integer,
