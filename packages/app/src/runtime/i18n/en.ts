@@ -796,6 +796,7 @@ export const dict = {
   "sidebar.inbox.section.needsAttention": "Needs attention",
   "sidebar.inbox.section.working": "Working",
   "sidebar.inbox.section.recent": "Recent",
+  "sidebar.inbox.section.routines": "Routines",
   "sidebar.inbox.section.archived": "Archived",
   "sidebar.inbox.unarchive": "Unarchive",
   "sidebar.inbox.status.approval": "Approval",

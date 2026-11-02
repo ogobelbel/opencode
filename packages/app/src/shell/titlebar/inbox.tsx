@@ -17,6 +17,7 @@ import { SessionTabAvatarView } from "@/shell/layout/session-tab-avatar"
 import { sessionTabTitle } from "./tab-title"
 import { sessionTitle } from "@/session/title"
 import { createSessionInbox, inboxArchived, inboxBusy, type InboxEntry, type InboxStatus } from "./inbox-model"
+import { isRoutineSession } from "./inbox-routines"
 import { Disclosure } from "./disclosure"
 import { compareWorking, workingSince } from "./inbox-working"
 
@@ -38,13 +39,17 @@ export function SidebarInbox() {
 
   // Which rows show their subagent sessions. Kept in memory: the tree follows the work, not the layout.
   const [expanded, setExpanded] = createStore<Record<string, boolean>>({})
+  // Routine chats are collapsed by default so they stop crowding normal sessions.
+  const [ui, setUi] = createStore({ routinesExpanded: false })
 
   const sections = createMemo(() => {
     // Child sessions only ever render nested under their root, never in a section of their own.
     const list = inbox.entries().filter((entry) => !entry.session.parentID)
+    const routines = list.filter((entry) => isRoutineSession(entry.session))
+    const normal = list.filter((entry) => !isRoutineSession(entry.session))
 
     // The most recently finished session comes first.
-    const finished = list
+    const finished = normal
       .filter((entry) => {
         const since = state.since
 
@@ -53,12 +58,53 @@ export function SidebarInbox() {
       .toSorted((a, b) => (b.session.time.idle ?? 0) - (a.session.time.idle ?? 0))
 
     return {
-      needs: list.filter((entry) => entry.status === "approval" || entry.status === "input"),
+      needs: normal.filter((entry) => entry.status === "approval" || entry.status === "input"),
       inbox: finished.filter((entry) => !inboxArchived(entry)),
       archived: finished.filter(inboxArchived),
       // `time.updated` moves with every message of a run, so order by when each run started to keep rows in place.
-      working: list.filter((entry) => entry.status === "working").toSorted(compareWorking),
+      working: normal.filter((entry) => entry.status === "working").toSorted(compareWorking),
+      routines,
+      routinesAttention: routines.some((entry) => entry.status === "approval" || entry.status === "input"),
     }
+  })
+
+  const routinesOpen = () => ui.routinesExpanded
+
+  // Open the group once when a routine starts waiting on a person; after that the toggle is authoritative.
+  let routineAttention = 0
+  createEffect(() => {
+    const count = sections().routines.filter(
+      (entry) => entry.status === "approval" || entry.status === "input",
+    ).length
+
+    if (count > routineAttention) setUi("routinesExpanded", true)
+
+    routineAttention = count
+  })
+
+  // A routine run is bound to one project, so group its chats under that project's name.
+  const routineGroups = createMemo(() => {
+    const groups = new Map<string, { label: string; entries: InboxEntry[] }>()
+
+    for (const entry of sections().routines) {
+      const project = entry.ctx.projects.forSession(entry.session)
+      const key = project?.worktree ?? entry.session.location.directory
+      const group = groups.get(key)
+
+      if (group) {
+        group.entries.push(entry)
+        continue
+      }
+
+      groups.set(key, {
+        label: displayName(project ?? { worktree: entry.session.location.directory }),
+        entries: [entry],
+      })
+    }
+
+    return [...groups.entries()]
+      .toSorted((a, b) => a[1].label.localeCompare(b[1].label))
+      .map(([key, group]) => ({ key, ...group }))
   })
 
   // The client only refreshes `time.idle` for loaded sessions when a run ends, so load every working one.
@@ -78,7 +124,13 @@ export function SidebarInbox() {
   createEffect(() => {
     const visible = sections()
 
-    inbox.loadBranches([...visible.needs, ...visible.working, ...visible.inbox, ...visible.archived])
+    inbox.loadBranches([
+      ...visible.needs,
+      ...visible.working,
+      ...visible.inbox,
+      ...visible.archived,
+      ...visible.routines,
+    ])
   })
 
   function DeleteDialog(props: { entry: InboxEntry }) {
@@ -152,6 +204,29 @@ export function SidebarInbox() {
   return (
     <div data-slot="sidebar-inbox" class="flex min-h-0 flex-1 flex-col">
       <div data-slot="sidebar-inbox-scroll" class="flex min-h-0 flex-1 flex-col gap-px overflow-y-auto pb-1">
+        <Show when={sections().routines.length > 0}>
+          <div class="flex shrink-0 flex-col gap-px pb-3">
+            <SectionHeader
+              label={language.t("sidebar.inbox.section.routines")}
+              count={sections().routines.length}
+              expanded={routinesOpen()}
+              attention={sections().routinesAttention}
+              onToggle={() => setUi("routinesExpanded", !ui.routinesExpanded)}
+            />
+            <Show when={routinesOpen()}>
+              <For each={routineGroups()}>
+                {(group) => (
+                  <div class="flex flex-col gap-px">
+                    <div class="flex h-5 items-center px-1.5 text-[11px] leading-4 font-medium text-v2-text-text-faint">
+                      <span class="min-w-0 truncate">{group.label}</span>
+                    </div>
+                    {rows(group.entries)}
+                  </div>
+                )}
+              </For>
+            </Show>
+          </div>
+        </Show>
         <Show when={sections().needs.length > 0}>
           <div class="flex shrink-0 flex-col gap-px pb-3">
             <SectionHeader label={language.t("sidebar.inbox.section.needsAttention")} count={sections().needs.length} />
@@ -163,7 +238,10 @@ export function SidebarInbox() {
           fallback={
             <Show
               when={
-                sections().needs.length === 0 && sections().working.length === 0 && sections().archived.length === 0
+                sections().needs.length === 0 &&
+                sections().working.length === 0 &&
+                sections().archived.length === 0 &&
+                sections().routines.length === 0
               }
             >
               <div class="px-1.5 py-2 text-[13px] leading-4 text-v2-text-text-faint">
@@ -206,20 +284,33 @@ export function SidebarInbox() {
   )
 }
 
-function SectionHeader(props: { label: string; count?: number; expanded?: boolean; onToggle?: () => void }) {
+function SectionHeader(props: {
+  label: string
+  count?: number
+  expanded?: boolean
+  attention?: boolean
+  onToggle?: () => void
+}) {
   const content = (): JSX.Element => (
     <>
       <span class="min-w-0 truncate">{props.label}</span>
       <Show when={props.count}>
         <span class="shrink-0 tabular-nums text-v2-text-text-faint">{props.count}</span>
       </Show>
-      <Show when={props.onToggle}>
-        <Icon
-          name="chevron-down"
-          size="small"
-          class="ms-auto shrink-0 transition-transform"
-          classList={{ "-rotate-90 rtl:rotate-90": !props.expanded }}
-        />
+      <Show when={props.attention || props.onToggle}>
+        <span class="ms-auto flex shrink-0 items-center gap-1">
+          <Show when={props.attention}>
+            <span class="size-1.5 rounded-full bg-v2-state-fg-warning" aria-hidden="true" />
+          </Show>
+          <Show when={props.onToggle}>
+            <Icon
+              name="chevron-down"
+              size="small"
+              class="shrink-0 transition-transform"
+              classList={{ "-rotate-90 rtl:rotate-90": !props.expanded }}
+            />
+          </Show>
+        </span>
       </Show>
     </>
   )
@@ -269,6 +360,7 @@ function InboxRow(props: {
   const project = createMemo(() => props.entry.ctx.projects.forSession(props.entry.session))
   const status = () => props.entry.status
   const unread = () => status() !== "ready" && status() !== "working"
+  const routine = () => isRoutineSession(props.entry.session)
 
   // Sessions on the current server are not marked.
   const tag = () => servers.tag(props.entry.conn)
@@ -382,11 +474,18 @@ function InboxRow(props: {
             />
           </Show>
           <span class="flex size-4 shrink-0 items-center justify-center">
-            <SessionTabAvatarView
-              project={project()}
-              directory={props.entry.session.location.directory}
-              unread={false}
-            />
+            <Show
+              when={routine()}
+              fallback={
+                <SessionTabAvatarView
+                  project={project()}
+                  directory={props.entry.session.location.directory}
+                  unread={false}
+                />
+              }
+            >
+              <Icon name="outline-rotate-clockwise" size="small" class="text-v2-text-text-accent" />
+            </Show>
           </span>
           <span class="min-w-0 truncate">
             {displayName(project() ?? { worktree: props.entry.session.location.directory })}
@@ -421,13 +520,16 @@ function InboxRow(props: {
           class="w-full min-w-0 truncate text-[13px] leading-4"
           // Rows recede once read so unread results stand out.
           classList={{
-            "font-medium text-v2-text-text-base": unread(),
-            "text-v2-text-text-muted": !unread(),
+            "font-medium": unread(),
+            "text-v2-text-text-base": unread() && !routine(),
+            "text-v2-text-text-muted": !unread() && !routine(),
+            "text-v2-text-text-accent": routine(),
           }}
         >
           {sessionTabTitle(props.entry.session.title, language.t("session.tab.session"))}
         </span>
-        <Show when={props.branchLoading || props.branch || props.worktree || tag()}>
+        {/* A routine chat outside a worktree would only show the main checkout's branch, which is misleading. */}
+        <Show when={props.worktree || (!routine() && (props.branchLoading || props.branch)) || tag()}>
           <span class="flex h-4 w-full min-w-0 items-center gap-1 text-[12px] leading-4 text-v2-text-text-faint">
             <Show when={props.branchLoading}>
               <span
