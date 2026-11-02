@@ -275,6 +275,18 @@ import type {
   ExperimentalRoutineGetRunOutput,
   ExperimentalRoutineCancelRunInput,
   ExperimentalRoutineCancelRunOutput,
+  ExperimentalArtifactsProvidersInput,
+  ExperimentalArtifactsProvidersOutput,
+  ExperimentalArtifactsListInput,
+  ExperimentalArtifactsListOutput,
+  ExperimentalArtifactsCreateInput,
+  ExperimentalArtifactsCreateOutput,
+  ExperimentalArtifactsGetInput,
+  ExperimentalArtifactsGetOutput,
+  ExperimentalArtifactsUpdateInput,
+  ExperimentalArtifactsUpdateOutput,
+  ExperimentalArtifactsDeleteInput,
+  ExperimentalArtifactsDeleteOutput,
   ShellListInput,
   ShellListOutput,
   ShellCreateInput,
@@ -1554,7 +1566,7 @@ const EndpointExperimentalPersistentPtyUpdate =
     preserveEffect<ExperimentalPersistentPtyUpdateOutput>()(
       raw["persistentPty.update"]({
         params: { ptyID: input["ptyID"] },
-        payload: { attachmentID: input["attachmentID"], size: input["size"] },
+        payload: { attachmentID: input["attachmentID"], size: input["size"], title: input["title"] },
       }).pipe(
         Effect.mapError(mapClientError),
         Effect.map((value) => value.data),
@@ -1596,6 +1608,8 @@ const EndpointExperimentalScheduleCreate =
           sessionID: input["sessionID"],
           name: input["name"],
           when: input["when"],
+          if: input["if"],
+          until: input["until"],
           ends: input["ends"],
           prompt: input["prompt"],
         },
@@ -1668,6 +1682,7 @@ const EndpointExperimentalRoutineCreate =
           prompt: input["prompt"],
           mode: input["mode"],
           model: input["model"],
+          permissions: input["permissions"],
           worktree: input["worktree"],
           timeoutSeconds: input["timeoutSeconds"],
           maxParallel: input["maxParallel"],
@@ -1700,6 +1715,7 @@ const EndpointExperimentalRoutineUpdate =
           prompt: input["prompt"],
           mode: input["mode"],
           model: input["model"],
+          permissions: input["permissions"],
           worktree: input["worktree"],
           timeoutSeconds: input["timeoutSeconds"],
           maxParallel: input["maxParallel"],
@@ -1767,6 +1783,63 @@ const EndpointExperimentalRoutineCancelRun =
       ),
     )
 
+const EndpointExperimentalArtifactsProviders =
+  (raw: RawClient["server.experimental"]) => (input?: ExperimentalArtifactsProvidersInput) =>
+    preserveEffect<ExperimentalArtifactsProvidersOutput>()(
+      raw["artifacts.providers"]({ query: { location: input?.["location"] } }).pipe(Effect.mapError(mapClientError)),
+    )
+
+const EndpointExperimentalArtifactsList =
+  (raw: RawClient["server.experimental"]) => (input?: ExperimentalArtifactsListInput) =>
+    preserveEffect<ExperimentalArtifactsListOutput>()(
+      raw["artifacts.list"]({
+        query: { location: input?.["location"], sessionID: input?.["sessionID"], provider: input?.["provider"] },
+      }).pipe(Effect.mapError(mapClientError)),
+    )
+
+const EndpointExperimentalArtifactsCreate =
+  (raw: RawClient["server.experimental"]) => (input: ExperimentalArtifactsCreateInput) =>
+    preserveEffect<ExperimentalArtifactsCreateOutput>()(
+      raw["artifacts.create"]({
+        query: { location: input["location"] },
+        payload: {
+          title: input["title"],
+          files: input["files"],
+          entry: input["entry"],
+          provider: input["provider"],
+          sessionID: input["sessionID"],
+        },
+      }).pipe(Effect.mapError(mapClientError)),
+    )
+
+const EndpointExperimentalArtifactsGet =
+  (raw: RawClient["server.experimental"]) => (input: ExperimentalArtifactsGetInput) =>
+    preserveEffect<ExperimentalArtifactsGetOutput>()(
+      raw["artifacts.get"]({
+        params: { artifactID: input["artifactID"] },
+        query: { location: input["location"] },
+      }).pipe(Effect.mapError(mapClientError)),
+    )
+
+const EndpointExperimentalArtifactsUpdate =
+  (raw: RawClient["server.experimental"]) => (input: ExperimentalArtifactsUpdateInput) =>
+    preserveEffect<ExperimentalArtifactsUpdateOutput>()(
+      raw["artifacts.update"]({
+        params: { artifactID: input["artifactID"] },
+        query: { location: input["location"] },
+        payload: { title: input["title"], files: input["files"], entry: input["entry"], sessionID: input["sessionID"] },
+      }).pipe(Effect.mapError(mapClientError)),
+    )
+
+const EndpointExperimentalArtifactsDelete =
+  (raw: RawClient["server.experimental"]) => (input: ExperimentalArtifactsDeleteInput) =>
+    preserveEffect<ExperimentalArtifactsDeleteOutput>()(
+      raw["artifacts.delete"]({
+        params: { artifactID: input["artifactID"] },
+        query: { location: input["location"] },
+      }).pipe(Effect.mapError(mapClientError)),
+    )
+
 const adaptGroupExperimental = (raw: RawClient["server.experimental"]) => ({
   persistentPty: {
     read: EndpointExperimentalPersistentPtyRead(raw),
@@ -1799,6 +1872,14 @@ const adaptGroupExperimental = (raw: RawClient["server.experimental"]) => ({
     runs: EndpointExperimentalRoutineRuns(raw),
     getRun: EndpointExperimentalRoutineGetRun(raw),
     cancelRun: EndpointExperimentalRoutineCancelRun(raw),
+  },
+  artifacts: {
+    providers: EndpointExperimentalArtifactsProviders(raw),
+    list: EndpointExperimentalArtifactsList(raw),
+    create: EndpointExperimentalArtifactsCreate(raw),
+    get: EndpointExperimentalArtifactsGet(raw),
+    update: EndpointExperimentalArtifactsUpdate(raw),
+    delete: EndpointExperimentalArtifactsDelete(raw),
   },
 })
 

@@ -57,12 +57,15 @@ export function SidebarInbox() {
       })
       .toSorted((a, b) => (b.session.time.idle ?? 0) - (a.session.time.idle ?? 0))
 
+    // Archived sessions, such as scripted `opencode run --archived` runs, only show in the Archived section.
+    const active = normal.filter((entry) => !inboxArchived(entry))
+
     return {
-      needs: normal.filter((entry) => entry.status === "approval" || entry.status === "input"),
+      needs: active.filter((entry) => entry.status === "approval" || entry.status === "input"),
       inbox: finished.filter((entry) => !inboxArchived(entry)),
       archived: finished.filter(inboxArchived),
       // `time.updated` moves with every message of a run, so order by when each run started to keep rows in place.
-      working: normal.filter((entry) => entry.status === "working").toSorted(compareWorking),
+      working: active.filter((entry) => entry.status === "working").toSorted(compareWorking),
       routines,
       routinesAttention: routines.some((entry) => entry.status === "approval" || entry.status === "input"),
     }
@@ -161,8 +164,10 @@ export function SidebarInbox() {
     )
   }
 
-  const rows = (list: InboxEntry[], depth = 0) => (
-    <For each={list.map((entry) => entry.key)}>
+  // Takes an accessor so only the For tracks the section. Reading it here would recreate the For, remounting every
+  // row on any session change and resetting the list's scroll.
+  const rows = (list: () => InboxEntry[], depth = 0) => (
+    <For each={list().map((entry) => entry.key)}>
       {(key) => (
         <Show when={inbox.byKey().get(key)}>
           {(entry) => (
@@ -191,7 +196,7 @@ export function SidebarInbox() {
                     aria-hidden="true"
                     class="pointer-events-none absolute inset-y-0 start-0 w-px bg-v2-border-border-muted"
                   />
-                  {rows(inbox.children(entry()), depth + 1)}
+                  {rows(() => inbox.children(entry()), depth + 1)}
                 </div>
               </Show>
             </>
@@ -220,7 +225,7 @@ export function SidebarInbox() {
                     <div class="flex h-5 items-center px-1.5 text-[11px] leading-4 font-medium text-v2-text-text-faint">
                       <span class="min-w-0 truncate">{group.label}</span>
                     </div>
-                    {rows(group.entries)}
+                    {rows(() => group.entries)}
                   </div>
                 )}
               </For>
@@ -230,7 +235,7 @@ export function SidebarInbox() {
         <Show when={sections().needs.length > 0}>
           <div class="flex shrink-0 flex-col gap-px pb-3">
             <SectionHeader label={language.t("sidebar.inbox.section.needsAttention")} count={sections().needs.length} />
-            {rows(sections().needs)}
+            {rows(() => sections().needs)}
           </div>
         </Show>
         <Show
@@ -253,12 +258,12 @@ export function SidebarInbox() {
           <Show when={sections().needs.length > 0}>
             <SectionHeader label={language.t("sidebar.inbox.section.recent")} />
           </Show>
-          {rows(sections().inbox)}
+          {rows(() => sections().inbox)}
         </Show>
         <Show when={sections().archived.length > 0}>
           <div class="flex shrink-0 flex-col gap-px pt-3">
             <SectionHeader label={language.t("sidebar.inbox.section.archived")} />
-            {rows(sections().archived)}
+            {rows(() => sections().archived)}
           </div>
         </Show>
       </div>
@@ -276,7 +281,7 @@ export function SidebarInbox() {
           />
           <div class="flex min-h-0 flex-col gap-px overflow-y-auto">
             {/* A collapsed shelf still shows the session that is open. */}
-            {rows(sections().working.filter((entry) => state.workingExpanded || inbox.selected(entry)))}
+            {rows(() => sections().working.filter((entry) => state.workingExpanded || inbox.selected(entry)))}
           </div>
         </div>
       </Show>
@@ -319,7 +324,7 @@ function SectionHeader(props: {
     <Show
       when={props.onToggle}
       fallback={
-        <div class="flex h-6 shrink-0 items-center gap-1.5 px-1.5 text-[12px] leading-4 font-medium text-v2-text-text-muted">
+        <div class="flex h-6 shrink-0 items-center gap-1.5 px-2 text-[12px] leading-4 font-medium text-v2-text-text-muted">
           {content()}
         </div>
       }
@@ -328,7 +333,7 @@ function SectionHeader(props: {
         <button
           type="button"
           aria-expanded={props.expanded}
-          class="flex h-6 w-full shrink-0 items-center gap-1.5 rounded-[6px] px-1.5 text-start text-[12px] leading-4 font-medium text-v2-text-text-muted hover:text-v2-text-text-base focus-visible:outline-none focus-visible:bg-v2-overlay-simple-overlay-hover"
+          class="flex h-6 w-full shrink-0 items-center gap-1.5 rounded-[6px] px-2 text-start text-[12px] leading-4 font-medium text-v2-text-text-muted hover:text-v2-text-text-base focus-visible:outline-none focus-visible:bg-v2-overlay-simple-overlay-hover"
           onClick={toggle()}
         >
           {content()}
@@ -457,7 +462,7 @@ function InboxRow(props: {
         data-slot="sidebar-inbox-item"
         data-status={status()}
         data-state={props.selected ? "active" : undefined}
-        class="group flex w-full shrink-0 flex-col gap-0.5 rounded-[6px] px-1.5 py-1.5 text-start hover:bg-v2-overlay-simple-overlay-hover focus-visible:outline-none focus-visible:bg-v2-overlay-simple-overlay-hover data-[state=active]:bg-v2-background-bg-layer-02"
+        class="group flex w-full shrink-0 flex-col gap-0.5 rounded-[6px] px-2 py-1.5 text-start hover:bg-v2-overlay-simple-overlay-hover focus-visible:outline-none focus-visible:bg-v2-overlay-simple-overlay-hover data-[state=active]:bg-v2-background-bg-layer-02"
         classList={{
           "transition-opacity hover:opacity-100 focus-visible:opacity-100": !props.selected,
           "opacity-70": status() === "working" && !props.selected,
@@ -465,7 +470,7 @@ function InboxRow(props: {
         }}
         onClick={props.onOpen}
       >
-        <span class="flex h-4 w-full min-w-0 items-center gap-1.5 text-[12px] leading-4 text-v2-text-text-faint">
+        <span class="flex h-4 w-full min-w-0 items-center gap-2 text-[12px] leading-4 text-v2-text-text-faint">
           <Show when={props.childCount > 0}>
             <Disclosure
               expanded={props.expanded}

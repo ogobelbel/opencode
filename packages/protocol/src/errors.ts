@@ -274,6 +274,15 @@ export class PtyNotFoundError extends Schema.TaggedError<PtyNotFoundError>()(
   { httpApiStatus: 404 },
 ) {}
 
+export class PtyFeatureUnsupportedError extends Schema.TaggedError<PtyFeatureUnsupportedError>()(
+  "PtyFeatureUnsupportedError",
+  {
+    feature: Schema.String,
+    message: Schema.String,
+  },
+  { httpApiStatus: 501 },
+) {}
+
 export class ShellNotFoundError extends Schema.TaggedError<ShellNotFoundError>()(
   "ShellNotFoundError",
   {
@@ -347,6 +356,15 @@ export class RoutineRunNotFoundError extends Schema.TaggedError<RoutineRunNotFou
   "RoutineRunNotFoundError",
   {
     runID: Schema.String,
+    message: Schema.String,
+  },
+  { httpApiStatus: 404 },
+) {}
+
+export class ArtifactNotFoundError extends Schema.TaggedError<ArtifactNotFoundError>()(
+  "ArtifactNotFoundError",
+  {
+    artifactID: Schema.String,
     message: Schema.String,
   },
   { httpApiStatus: 404 },
