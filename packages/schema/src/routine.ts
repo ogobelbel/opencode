@@ -2,6 +2,7 @@ export * as Routine from "./routine.js"
 
 import { Schema } from "effect"
 import { ascending } from "./identifier.js"
+import { Permission } from "./permission.js"
 import { NonNegativeInt, PositiveInt, optional, statics } from "./schema.js"
 
 export const ID = Schema.String.check(Schema.isStartingWith("aut_")).pipe(
@@ -74,6 +75,8 @@ export const Info = Schema.Struct({
   prompt: Schema.String,
   mode: Mode,
   model: Model,
+  /** Extra rules appended after the mode's base rules. The last matching rule wins. */
+  permissions: Permission.Ruleset.pipe(optional),
   /** Run in a fresh git worktree instead of `directory`. Defaults to false. */
   worktree: optional(Schema.Boolean),
   timeoutSeconds: optional(PositiveInt),
@@ -109,6 +112,7 @@ export const CreateInput = Schema.Struct({
   prompt: Schema.String,
   mode: Mode,
   model: Model,
+  permissions: Permission.Ruleset.pipe(optional),
   worktree: optional(Schema.Boolean),
   timeoutSeconds: optional(PositiveInt),
   maxParallel: optional(PositiveInt),
@@ -123,6 +127,7 @@ export const UpdateInput = Schema.Struct({
   prompt: optional(Schema.String),
   mode: optional(Mode),
   model: optional(Model),
+  permissions: Permission.Ruleset.pipe(optional),
   worktree: optional(Schema.Boolean),
   timeoutSeconds: optional(PositiveInt),
   maxParallel: optional(PositiveInt),

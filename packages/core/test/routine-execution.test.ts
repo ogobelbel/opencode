@@ -31,4 +31,27 @@ describe("Routine execution", () => {
       expect(evaluate(action, "*", rules).effect).toBe("deny")
     }
   })
+
+  it("appends routine rules after the mode's base rules", () => {
+    const rules = permissions("yolo", [
+      { action: "subagent", resource: "*", effect: "deny" },
+      { action: "skill", resource: "*", effect: "deny" },
+      { action: "skill", resource: "trello", effect: "allow" },
+    ])
+
+    expect(evaluate("bash", "*", rules).effect).toBe("allow")
+    expect(evaluate("subagent", "*", rules).effect).toBe("deny")
+    expect(evaluate("skill", "trello", rules).effect).toBe("allow")
+    expect(evaluate("skill", "code-review-and-quality", rules).effect).toBe("deny")
+  })
+
+  it("keeps the skill tool reachable when a wildcard deny is followed by an allow", () => {
+    const rules = permissions("yolo", [
+      { action: "skill", resource: "*", effect: "deny" },
+      { action: "skill", resource: "trello", effect: "allow" },
+    ])
+
+    // Tool.snapshot wholly disables a tool only when the last matching action rule is a wildcard deny.
+    expect(rules.findLast((rule) => rule.action === "skill")?.effect).toBe("allow")
+  })
 })
