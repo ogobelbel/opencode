@@ -1,4 +1,5 @@
 import { ArtifactEndpoints } from "./artifact.js"
+import { JobEndpoints } from "./job.js"
 import { MediaGetEndpoint } from "./media.js"
 import { PersistentPtyGroup } from "./persistent-pty.js"
 import { RoutineEndpoints } from "./routine.js"
@@ -10,4 +11,5 @@ export const ExperimentalGroup = PersistentPtyGroup.add(
   ...ScheduleEndpoints,
   ...RoutineEndpoints,
   ...ArtifactEndpoints,
+  ...JobEndpoints,
 )

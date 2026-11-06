@@ -33,7 +33,8 @@ export function SessionContextUsage(props: {
   const ctx = usePlugin()
   const layout = ctx.layout
   const i18n = useI18n()
-  syncCatalog(
+
+  const catalog = syncCatalog(
     () => props.session,
     () => props.active !== false,
   )
@@ -121,11 +122,13 @@ export function SessionContextUsage(props: {
 
   const openContext = () => {
     if (!props.session.id) return
+    catalog.retry()
     layout.toggle(`${ctx.id}:main`, props.session)
   }
 
   const viewContext = () => {
     if (!props.session.id) return
+    catalog.retry()
     layout.open(`${ctx.id}:main`, props.session)
   }
 
@@ -194,7 +197,14 @@ export function SessionContextUsage(props: {
   )
 
   const usageMenu = () => (
-    <Menu placement="bottom-end" gutter={4} modal={false}>
+    <Menu
+      placement="bottom-end"
+      gutter={4}
+      modal={false}
+      onOpenChange={(open) => {
+        if (open) catalog.retry()
+      }}
+    >
       <Tooltip value={ctx.t("usage.view")} placement={props.placement ?? "top"}>
         <Menu.Trigger
           as={Button}
