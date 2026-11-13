@@ -39,6 +39,7 @@ import { createImagePreview } from "../components/image-preview"
 import { useMarkdown } from "../context/markdown"
 import { getDirectory, getFilename } from "@opencode/util/path"
 import { checksum } from "@opencode/util/encode"
+import { formatExecuteOutput } from "@opencode/util/execute-output"
 import { Tooltip } from "@opencode/ui/tooltip"
 import { useDialog } from "@opencode/ui/context/dialog"
 import { Dialog, DialogBody, DialogHeader, DialogTitle } from "@opencode/ui/dialog"
@@ -79,12 +80,13 @@ import {
   viewShellRun,
   viewSubagentRun,
   INITIAL_SUBAGENT_RUN_STATE,
+  stoppedShell,
   type ShellRunEvent,
   type SubagentRunState,
 } from "./run-machine"
 import { LinkedText } from "../components/linked-text"
 
-function ShellSubmessage(props: { text: string; animate?: boolean }) {
+export function ShellSubmessage(props: { text: string; animate?: boolean }) {
   let widthRef: HTMLSpanElement | undefined
   let valueRef: HTMLSpanElement | undefined
 
@@ -132,7 +134,7 @@ function optional<S extends Schema.ConstraintCodec<unknown, unknown>>(schema: S)
   return Schema.catchDecoding<typeof field>(() => Effect.succeed(Option.none()))(field)
 }
 
-const toolInput = Schema.decodeUnknownSync(
+export const toolInput = Schema.decodeUnknownSync(
   Schema.Struct({
     path: optional(Schema.String),
     pattern: optional(Schema.String),
@@ -154,7 +156,7 @@ const toolInput = Schema.decodeUnknownSync(
   }).pipe(Schema.catchDecoding(() => Effect.succeed(Option.some({})))),
 )
 
-const toolMetadata = Schema.decodeUnknownSync(
+export const toolMetadata = Schema.decodeUnknownSync(
   Schema.Struct({
     name: optional(Schema.String),
     provider: optional(Schema.String),
@@ -162,7 +164,8 @@ const toolMetadata = Schema.decodeUnknownSync(
     command: optional(Schema.String),
     shellID: optional(Schema.String),
     status: optional(Schema.String),
-    background: optional(Schema.Boolean),
+    interrupted: optional(Schema.Boolean),
+    notice: optional(Schema.String),
     count: optional(Schema.Finite),
     matches: optional(Schema.Finite),
     files: optional(Schema.Array(Schema.Unknown)),
@@ -245,7 +248,7 @@ function relativizeProjectPath(path: string, directory?: string) {
   return path.slice(prefix.length)
 }
 
-function displayDirectory(path: string | undefined) {
+export function displayDirectory(path: string | undefined) {
   const data = useData()
 
   return relativizeProjectPath(getDirectory(path), data.directory)
@@ -286,7 +289,7 @@ function skillToolName(input: ToolInput, metadata: ToolMetadata) {
   return metadata.name ?? input.id ?? input.name
 }
 
-function currentSkillName(tool: SessionMessageAssistantTool) {
+export function currentSkillName(tool: SessionMessageAssistantTool) {
   return skillToolName(toolInput(currentToolInput(tool)), toolMetadata(currentToolMetadata(tool)))
 }
 
@@ -328,7 +331,7 @@ function toolTitle(tool: SessionMessageAssistantTool, i18n: UiI18n) {
   }
 }
 
-function urls(text: string | undefined) {
+export function urls(text: string | undefined) {
   if (!text) return []
 
   return [
@@ -336,7 +339,7 @@ function urls(text: string | undefined) {
   ]
 }
 
-function sessionLink(id: string | undefined, href?: (id: string) => string | undefined) {
+export function sessionLink(id: string | undefined, href?: (id: string) => string | undefined) {
   if (!id) return undefined
 
   return href?.(id)
@@ -355,7 +358,7 @@ function taskSession(
     .sort((a, b) => (b.time.created ?? 0) - (a.time.created ?? 0))[0]?.id
 }
 
-function ExaOutput(props: { output?: string }) {
+export function ExaOutput(props: { output?: string }) {
   const i18n = useI18n()
   const [showAll, setShowAll] = createSignal(false)
   let firstRevealedRef: HTMLAnchorElement | undefined
@@ -863,25 +866,47 @@ export function CurrentReadToolGroup(props: {
   open?: boolean
   onOpenChange?: (open: boolean) => void
   onSizeChange?: () => void
+  /** Names each file once, and up to this many while closed; past that the closed row says how many files. */
+  names?: number
 }) {
   const i18n = useI18n()
   const [state, setState] = createStore({ truncated: false })
   const disclosure = createDisclosure({ open: () => props.open, onOpenChange: (open) => props.onOpenChange?.(open) })
   const open = disclosure.open
-  const expandable = () => open() || state.truncated
 
   const pending = createMemo(() =>
     props.tools.some((tool) => tool.state.status === "streaming" || tool.state.status === "running"),
   )
 
-  const files = createMemo(() =>
-    props.tools.flatMap((tool) => {
+  const files = createMemo(() => {
+    const reads = props.tools.flatMap((tool) => {
       const input = toolInput(currentToolInput(tool))
       const name = getFilename(input.path ?? "")
 
-      return name ? [{ id: tool.id, name, args: readArgs(input) }] : []
-    }),
+      return name ? [{ id: tool.id, path: input.path ?? "", name, args: readArgs(input) }] : []
+    })
+
+    if (props.names === undefined) return reads
+
+    // A file read in several ranges is named once, without one range standing for the rest.
+    return [
+      ...reads
+        .reduce((unique, file) => {
+          const seen = unique.get(file.path)
+
+          return unique.set(file.path, seen ? { ...seen, args: [] } : file)
+        }, new Map<string, (typeof reads)[number]>())
+        .values(),
+    ]
+  })
+
+  const summary = createMemo(() =>
+    props.names !== undefined && !open() && files().length > props.names
+      ? i18n.plural("ui.timeline.activity.files", files().length)
+      : undefined,
   )
+
+  const expandable = () => open() || state.truncated || !!summary()
 
   let list: HTMLSpanElement | undefined
 
@@ -923,20 +948,27 @@ export function CurrentReadToolGroup(props: {
                   <TextShimmer text={i18n.t("ui.tool.read")} active={pending()} />
                 </span>
                 <span ref={list} data-slot="basic-tool-tool-subtitle">
-                  <Index each={files()}>
-                    {(file, index) => (
-                      <>
-                        <Show when={index > 0}> </Show>
-                        <span data-slot="read-tool-group-file" data-timeline-part-id={file().id}>
-                          {file().name}
-                          <For each={file().args}>
-                            {(arg) => <span data-slot="basic-tool-tool-arg">{` ${arg}`}</span>}
-                          </For>
-                          <Show when={index < files().length - 1}>,</Show>
-                        </span>
-                      </>
-                    )}
-                  </Index>
+                  <Show
+                    when={summary()}
+                    fallback={
+                      <Index each={files()}>
+                        {(file, index) => (
+                          <>
+                            <Show when={index > 0}> </Show>
+                            <span data-slot="read-tool-group-file" data-timeline-part-id={file().id}>
+                              {file().name}
+                              <For each={file().args}>
+                                {(arg) => <span data-slot="basic-tool-tool-arg">{` ${arg}`}</span>}
+                              </For>
+                              <Show when={index < files().length - 1}>,</Show>
+                            </span>
+                          </>
+                        )}
+                      </Index>
+                    }
+                  >
+                    {(text) => text()}
+                  </Show>
                 </span>
               </div>
             </div>
@@ -1075,7 +1107,7 @@ export function CurrentFileToolGroup(props: {
   )
 }
 
-function scrollParent(element: HTMLElement): HTMLElement | undefined {
+export function scrollParent(element: HTMLElement): HTMLElement | undefined {
   const parent = element.parentElement
 
   if (!parent) return
@@ -1089,7 +1121,7 @@ function isFileChangeTool(tool: SessionMessageAssistantTool) {
   return tool.state.status !== "error" && (tool.name === "edit" || tool.name === "write" || tool.name === "patch")
 }
 
-function samePatchFile(a: FileDiffInfo, b: FileDiffInfo) {
+export function samePatchFile(a: FileDiffInfo, b: FileDiffInfo) {
   return (
     a === b ||
     (a.file === b.file &&
@@ -1181,7 +1213,7 @@ export const ToolRegistry = {
   render: getTool,
 }
 
-function FileTool(props: ToolProps & { title: string; count: number; children?: JSX.Element }) {
+export function FileTool(props: ToolProps & { title: string; count: number; children?: JSX.Element }) {
   const i18n = useI18n()
 
   return (
@@ -1204,7 +1236,7 @@ function FileTool(props: ToolProps & { title: string; count: number; children?: 
   )
 }
 
-function FileAccordionGroup(props: { children: JSX.Element }) {
+export function FileAccordionGroup(props: { children: JSX.Element }) {
   return (
     <div
       data-component="accordion"
@@ -1365,6 +1397,7 @@ export function ToolDisplay(
 
   const errorSubtitle = createMemo(() => toolErrorSubtitle(props, i18n))
   const error = createMemo(() => toolDisplayError(props))
+  const stopped = createMemo(() => stoppedShell({ ...props, metadata: toolMetadata(props.metadata) }))
   const render = createMemo(() => ToolRegistry.render(props.tool) ?? GenericTool)
 
   // The subagent tool waits on a form while the user picks a model and starts the child; the card replaces its row.
@@ -1389,6 +1422,14 @@ export function ToolDisplay(
     <Show when={!hideQuestion()}>
       <div data-component="tool-part-wrapper" data-timeline-part-id={props.id}>
         <Switch>
+          <Match when={stopped()}>
+            {(stopped) => (
+              <>
+                <Dynamic component={render()} {...props} output={stopped().output} />
+                <ToolErrorCard tool={props.tool} error={stopped().notice} subtitle={errorSubtitle()} />
+              </>
+            )}
+          </Match>
           <Match when={pendingSubagent()}>{(form) => <SubagentStartCard form={form()} />}</Match>
           <Match when={error()}>
             {(error) => {
@@ -1443,7 +1484,7 @@ export function ToolDisplay(
 
 // Each branch must stay in sync with its tool trigger's subtitle expression so
 // failed rows read like their non-error counterparts ("Shell sleep 30").
-function toolErrorSubtitle(props: ToolProps, i18n: UiI18n) {
+export function toolErrorSubtitle(props: ToolProps, i18n: UiI18n) {
   const input = toolInput(props.input)
   const metadata = toolMetadata(props.metadata)
 
@@ -1479,7 +1520,7 @@ function toolErrorSubtitle(props: ToolProps, i18n: UiI18n) {
   return undefined
 }
 
-function toolDisplayError(props: ToolProps & { error?: string }) {
+export function toolDisplayError(props: ToolProps & { error?: string }) {
   // Code Mode failures render inline in the execution's call list.
   if (props.tool === "execute") return undefined
 
@@ -1778,15 +1819,7 @@ ToolRegistry.register({
 
     const view = createMemo(() => viewSubagentRun(run()))
 
-    const subtitle = createMemo(() => {
-      const value = input().description || childSessionId()
-
-      if (!value) return value
-
-      if (view().background) return `${value} (background)`
-
-      return value
-    })
+    const subtitle = createMemo(() => input().description || childSessionId())
 
     const href = createMemo(() => sessionLink(childSessionId(), data.sessionHref))
     const clickable = createMemo(() => !!(childSessionId() && (data.navigateToSession || href())))
@@ -1866,7 +1899,7 @@ ToolRegistry.register({
   },
 })
 
-function ConsoleOutput(props: { command?: string; output: string }) {
+export function ConsoleOutput(props: { command?: string; output: string }) {
   const i18n = useI18n()
 
   return (
@@ -1906,7 +1939,7 @@ function ConsoleOutput(props: { command?: string; output: string }) {
 }
 
 // The button sits beside its section's <pre>, not inside it, so selecting and copying text never picks it up.
-function ConsoleCopy(props: { text: string; label: string }) {
+export function ConsoleCopy(props: { text: string; label: string }) {
   const i18n = useI18n()
   const copy = createCopyFeedback()
   const label = () => (copy.copied() ? i18n.t("ui.message.copied") : props.label)
@@ -2014,17 +2047,18 @@ ToolRegistry.register({
   },
 })
 
-const decodeJson = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown))
-
 function ExecuteDetails(props: { code: string; output: string; error?: string; calls: number; status?: string }) {
   const i18n = useI18n()
   const fileComponent = useFileComponent()
   const lineCount = (text: string) => text.split("\n").length
   const lines = (text: string) => i18n.plural("ui.tool.execute.lines", lineCount(text))
 
+  // Code Mode returns structured results as compact JSON; show those indented, and highlight a bare JSON result.
+  const output = createMemo(() => formatExecuteOutput(props.output))
+
   // Code and output share one number gutter, sized to the longer block, so their content starts on the same column.
   const numberDigits = () =>
-    String(Math.max(lineCount(props.code), props.output && !props.error ? lineCount(props.output) : 0)).length
+    String(Math.max(lineCount(props.code), props.output && !props.error ? lineCount(output().text) : 0)).length
 
   return (
     <Dialog fit containerClass="!w-[min(calc(100vw_-_32px),720px)] max-h-[calc(100vh_-_92px)]">
@@ -2060,26 +2094,23 @@ function ExecuteDetails(props: { code: string; output: string; error?: string; c
             when={props.error}
             fallback={
               <Show when={props.output}>
-                {(output) => (
-                  <ExecuteDetailsSection
-                    label={i18n.t("ui.tool.execute.output")}
-                    meta={lines(output())}
-                    copy={output()}
-                    copyLabel={i18n.t("ui.tool.execute.copyOutput")}
-                  >
-                    <Dynamic
-                      component={fileComponent}
-                      mode="text"
-                      file={{
-                        // Code Mode returns structured results as JSON; highlight those, leave anything else plain.
-                        name: Option.isSome(decodeJson(output())) ? "output.json" : "output.txt",
-                        contents: output(),
-                        cacheKey: checksum(output()),
-                      }}
-                      overflow="wrap"
-                    />
-                  </ExecuteDetailsSection>
-                )}
+                <ExecuteDetailsSection
+                  label={i18n.t("ui.tool.execute.output")}
+                  meta={lines(output().text)}
+                  copy={output().text}
+                  copyLabel={i18n.t("ui.tool.execute.copyOutput")}
+                >
+                  <Dynamic
+                    component={fileComponent}
+                    mode="text"
+                    file={{
+                      name: output().json !== undefined && output().rest === undefined ? "output.json" : "output.txt",
+                      contents: output().text,
+                      cacheKey: checksum(output().text),
+                    }}
+                    overflow="wrap"
+                  />
+                </ExecuteDetailsSection>
               </Show>
             }
           >
@@ -2132,6 +2163,7 @@ function ExecuteDetailsSection(props: {
 function ExecuteOutputRow(props: { output: string }) {
   const i18n = useI18n()
   const [open, setOpen] = createSignal(false)
+  const text = createMemo(() => formatExecuteOutput(props.output).text)
 
   const toggle = () => {
     if (window.getSelection()?.toString()) return
@@ -2158,12 +2190,12 @@ function ExecuteOutputRow(props: { output: string }) {
         </span>
         <span data-slot="execute-tool-call-name">{i18n.t("ui.tool.execute.output")}</span>
         <span data-slot="execute-tool-call-args">
-          {i18n.plural("ui.tool.execute.lines", props.output.split("\n").length)}
+          {i18n.plural("ui.tool.execute.lines", text().split("\n").length)}
         </span>
       </div>
       <Show when={open()}>
         <div data-slot="execute-tool-output">
-          <ConsoleOutput output={props.output} />
+          <ConsoleOutput output={text()} />
         </div>
       </Show>
     </div>
