@@ -262,10 +262,13 @@ export function getConfig() {
         mac: { ...base.mac, icon: "resources/icons/icon.icon" },
         // The DMG volume icon would otherwise use the same actool-generated ICNS.
         dmg: { icon: "resources/icons/icon.icns" },
+        // Fork build: updates come from this fork's own GitHub releases, never from opencode.ai. The official
+        // feed would offer upstream builds, and installing one replaces this app and drops the routines.
         publish: {
-          provider: "generic",
-          url: "https://opencode.ai/update/api/latest/desktop/opencode/",
-          channel: "latest",
+          provider: "github",
+          owner: "ogobelbel",
+          repo: "opencode",
+          releaseType: "release",
         },
         deb: { fpm: [metainfoFpm(appId), legacyDesktopEntryFpm] },
         rpm: { packageName: "opencode", fpm: [rpmNoBuildIdLinksFpm, metainfoFpm(appId), legacyDesktopEntryFpm] },
