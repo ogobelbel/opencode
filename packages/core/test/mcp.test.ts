@@ -3964,17 +3964,41 @@ describe("MCP events", () => {
       Effect.map((all) => all[0]?.status),
     )
 
-  // Answers `events/stream` with one `active` notification, then closes the stream.
+  // Lists "job.finished" with its `job` argument mirrored into a header, rejects a stream without that header,
+  // and answers any other `events/stream` with one `active` notification, then closes the stream.
   const eventServer = (input: { events?: boolean } = {}) => {
-    const streams: Array<{ name: string | null; params: unknown }> = []
+    const streams: Array<{ name: string | null; job: string | null; params: unknown }> = []
     return resourceServer({
       modern: true,
       events: input.events,
       respond: async (request) => {
         if (request.method !== "POST") return undefined
         const body: unknown = await request.clone().json()
-        if (!isRecord(body) || body.method !== "events/stream") return undefined
-        streams.push({ name: request.headers.get("mcp-name"), params: body.params })
+        if (!isRecord(body)) return undefined
+        if (body.method === "events/list")
+          return Response.json({
+            jsonrpc: "2.0",
+            id: body.id,
+            result: {
+              resultType: "complete",
+              events: [
+                {
+                  name: "job.finished",
+                  delivery: ["push"],
+                  inputSchema: { type: "object", properties: { job: { type: "string", "x-mcp-header": "Job" } } },
+                  payloadSchema: { type: "object" },
+                },
+              ],
+            },
+          })
+        if (body.method !== "events/stream") return undefined
+        const job = request.headers.get("mcp-param-job")
+        streams.push({ name: request.headers.get("mcp-name"), job, params: body.params })
+        if (job === null)
+          return Response.json(
+            { jsonrpc: "2.0", id: body.id, error: { code: -32020, message: "Header mismatch" } },
+            { status: 400 },
+          )
         const meta = { "io.modelcontextprotocol/subscriptionId": body.id }
         const frame = (message: Record<string, unknown>) =>
           `data: ${JSON.stringify({ jsonrpc: "2.0", ...message })}\n\n`
@@ -3996,7 +4020,7 @@ describe("MCP events", () => {
       },
     )
 
-  testEffect(Layer.empty).live("streams a server's events over Streamable HTTP, naming the event in Mcp-Name", () =>
+  testEffect(Layer.empty).live("streams a server's events over Streamable HTTP with Mcp-Name and Mcp-Param headers", () =>
     Effect.gen(function* () {
       const server = yield* eventServer({ events: true })
       yield* Effect.gen(function* () {
@@ -4006,8 +4030,11 @@ describe("MCP events", () => {
         if (!events) throw new Error("expected MCP events")
         const messages = yield* Stream.runCollect(events.stream({ name: "job.finished", arguments: { job: "j1" } }))
         expect(messages).toEqual([{ type: "active", cursor: "c1", truncated: false }])
+        // Unlisted at first, so the stream relists after the server rejects it for the missing header.
+        const params = expect.objectContaining({ name: "job.finished", arguments: { job: "j1" } })
         expect(server.streams).toEqual([
-          { name: "job.finished", params: expect.objectContaining({ name: "job.finished", arguments: { job: "j1" } }) },
+          { name: "job.finished", job: null, params },
+          { name: "job.finished", job: "j1", params },
         ])
       }).pipe(Effect.provide(layer(server.url, "mcp_events")))
     }),

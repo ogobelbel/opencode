@@ -28,6 +28,9 @@ import {
   type ResourceTemplateType,
   type Transport,
   type VersionNegotiationOptions,
+  type XMcpHeaderDeclaration,
+  buildMcpParamHeaders,
+  scanXMcpHeaderDeclarations,
 } from "@modelcontextprotocol/client"
 import { Cause, Clock, Duration, Effect, Exit, PlatformError, Queue, Schedule, Schema, Stream } from "effect"
 import { ConfigMCP } from "@opencode/schema/config/mcp"
@@ -547,6 +550,41 @@ export const connect = Effect.fnUntraced(function* (options: ConnectOptions) {
     // first and leave the request unmade; the result is the same empty list without the noise.
     const advertised = (capability: "tools" | "prompts" | "resources") =>
       Boolean(client.getServerCapabilities()?.[capability])
+    // Each listed event type's `x-mcp-header` annotations, mirrored as `Mcp-Param-*` headers on its stream.
+    const eventHeaders = new Map<string, ReadonlyArray<XMcpHeaderDeclaration>>()
+    const listEvents = Effect.fnUntraced(function* () {
+      const events: EventType[] = []
+      let cursor: string | undefined
+      for (let page = 0; page < EVENT_LIST_PAGES; page++) {
+        const result = yield* list("list MCP events", (signal) =>
+          client.request({ method: "events/list", params: cursor === undefined ? {} : { cursor } }, EventList, {
+            ...catalog,
+            signal,
+          }),
+        )
+        events.push(...result.events)
+        cursor = result.nextCursor
+        if (cursor === undefined) break
+      }
+      if (cursor !== undefined)
+        yield* Effect.logWarning("MCP event list has more pages than read", { server, pages: EVENT_LIST_PAGES })
+      eventHeaders.clear()
+      const valid: EventType[] = []
+      for (const event of events) {
+        const scan = scanXMcpHeaderDeclarations(event.inputSchema)
+        if (!scan.valid) {
+          yield* Effect.logWarning("skipping MCP event type with an invalid x-mcp-header", {
+            server,
+            event: event.name,
+            reason: scan.reason,
+          })
+          continue
+        }
+        eventHeaders.set(event.name, scan.declarations)
+        valid.push(event)
+      }
+      return valid
+    })
 
     // Annotated rather than `satisfies`: the inferred SDK types are cyclic, so declaration emit needs the named type.
     const connection: Connection = {
@@ -557,27 +595,7 @@ export const connect = Effect.fnUntraced(function* (options: ConnectOptions) {
       events:
         options.events && client.getServerCapabilities()?.extensions?.[EVENTS]
           ? {
-              list: Effect.fnUntraced(function* () {
-                const events: EventType[] = []
-                let cursor: string | undefined
-                for (let page = 0; page < EVENT_LIST_PAGES; page++) {
-                  const result = yield* list("list MCP events", (signal) =>
-                    client.request(
-                      { method: "events/list", params: cursor === undefined ? {} : { cursor } },
-                      EventList,
-                      {
-                        ...catalog,
-                        signal,
-                      },
-                    ),
-                  )
-                  events.push(...result.events)
-                  cursor = result.nextCursor
-                  if (cursor === undefined) return events
-                }
-                yield* Effect.logWarning("MCP event list has more pages than read", { server, pages: EVENT_LIST_PAGES })
-                return events
-              }),
+              list: listEvents,
               stream: (input) =>
                 Stream.callback<EventMessage, Error>((queue) =>
                   Effect.gen(function* () {
@@ -587,20 +605,32 @@ export const connect = Effect.fnUntraced(function* (options: ConnectOptions) {
                       }),
                     )
                     // Interrupting the request cancels the stream; the server closing it resolves the request.
-                    yield* Effect.tryPromise({
+                    const open = Effect.tryPromise({
                       try: (signal) =>
                         client.request({ method: "events/stream", params: input }, StreamResult, {
                           signal,
+                          headers: connection.modern
+                            ? buildMcpParamHeaders(eventHeaders.get(input.name) ?? [], input.arguments)
+                            : undefined,
                           // Heartbeats, not a request timeout, tell a quiet stream from a dead one; see below.
                           timeout: Infinity,
                           // Routes the stream's notifications, which can arrive before the request settles.
                           onRequestId: (id) => streams.set(String(id), queue),
                         }),
-                      catch: (error) =>
+                      catch: (error) => error,
+                    })
+                    // A modern server rejects headers mirrored from a stale or unlisted event type before opening
+                    // the stream, so relist and retry once with the fresh schema.
+                    yield* open.pipe(
+                      Effect.catchIf(
+                        (error) => error instanceof ProtocolError && error.code === HEADER_MISMATCH,
+                        () => listEvents().pipe(Effect.andThen(open)),
+                      ),
+                      Effect.mapError((error) =>
                         error instanceof ProtocolError && EVENT_STREAM_REJECTED.has(error.code)
                           ? new EventStreamRejectedError({ server, code: error.code, message: error.message })
                           : failure(error),
-                    }).pipe(
+                      ),
                       Effect.tapError((error) =>
                         Effect.logWarning("failed to stream MCP events", { server, error: error.message }),
                       ),
