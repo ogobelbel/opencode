@@ -8,6 +8,7 @@ import { createEffect, For, on, onCleanup, onMount, Show } from "solid-js"
 import { createStore } from "solid-js/store"
 import { useLanguage } from "@/runtime/i18n/language"
 import { formatServerError } from "@/runtime/server/errors"
+import { canUseServer } from "@/runtime/server/health-machine"
 import { ServerConnection } from "@/runtime/server/registry"
 import { useGlobal, type ServerCtx } from "@/runtime/server/runtime"
 import { sessionHref } from "@/shell/routes/session"
@@ -62,11 +63,16 @@ export function RoutinesPage() {
   })
 
   const connections = () =>
-    global.servers.list().filter((conn) => {
-      if (conn.type === "plugin" && conn.state !== "ready") return false
+    global.servers.list().filter((conn) => canUseServer(global.servers.health[ServerConnection.key(conn)]))
 
-      return global.servers.health[ServerConnection.key(conn)]?.healthy !== false
-    })
+  // Controllers exist for every listed server, so one of these connections only lacks one after signing out.
+  const ctxFor = (server: ServerConnection.Any) => {
+    const ctx = global.serverCtx(ServerConnection.key(server))
+
+    if (!ctx) throw new Error(language.t("common.requestFailed"))
+
+    return ctx
+  }
 
   const routineKey = (server: ServerConnection.Any, routineID: string) =>
     `${ServerConnection.key(server)}:${routineID}`
@@ -75,7 +81,7 @@ export function RoutinesPage() {
     if (!quiet) setStore("runsStatus", entry.key, "loading")
 
     try {
-      const runs = await global.ensureServerCtx(entry.server).sdk.api.experimental.routine.runs({
+      const runs = await ctxFor(entry.server).sdk.api.experimental.routine.runs({
         routineID: entry.info.id,
         limit: RUN_LIMIT,
       })
@@ -96,7 +102,7 @@ export function RoutinesPage() {
     try {
       const settled = await Promise.allSettled(
         list.map(async (server) => {
-          const routines = await global.ensureServerCtx(server).sdk.api.experimental.routine.list()
+          const routines = await ctxFor(server).sdk.api.experimental.routine.list()
 
           return routines.map((info) => ({ key: routineKey(server, info.id), server, info }) satisfies RoutineEntry)
         }),
@@ -135,7 +141,7 @@ export function RoutinesPage() {
 
   const toggle = async (entry: RoutineEntry, enabled: boolean) => {
     try {
-      await global.ensureServerCtx(entry.server).sdk.api.experimental.routine.update({
+      await ctxFor(entry.server).sdk.api.experimental.routine.update({
         routineID: entry.info.id,
         enabled,
       })
@@ -147,7 +153,7 @@ export function RoutinesPage() {
 
   const runNow = async (entry: RoutineEntry) => {
     try {
-      await global.ensureServerCtx(entry.server).sdk.api.experimental.routine.run({ routineID: entry.info.id })
+      await ctxFor(entry.server).sdk.api.experimental.routine.run({ routineID: entry.info.id })
       setStore("expanded", entry.key, true)
       await refreshAll(true)
     } catch (error) {
@@ -157,7 +163,7 @@ export function RoutinesPage() {
 
   const duplicate = async (entry: RoutineEntry) => {
     try {
-      await global.ensureServerCtx(entry.server).sdk.api.experimental.routine.duplicate({
+      await ctxFor(entry.server).sdk.api.experimental.routine.duplicate({
         routineID: entry.info.id,
       })
       await refreshAll(true)
@@ -168,7 +174,7 @@ export function RoutinesPage() {
 
   const remove = async (entry: RoutineEntry) => {
     try {
-      await global.ensureServerCtx(entry.server).sdk.api.experimental.routine.delete({ routineID: entry.info.id })
+      await ctxFor(entry.server).sdk.api.experimental.routine.delete({ routineID: entry.info.id })
       await refreshAll(true)
     } catch (error) {
       report(error)
@@ -180,7 +186,7 @@ export function RoutinesPage() {
   const editorCtx = () => {
     const server = editorServer()
 
-    return server ? global.ensureServerCtx(server) : undefined
+    return server ? global.serverCtx(ServerConnection.key(server)) : undefined
   }
 
   const projectsFor = (ctx: ServerCtx, routine?: RoutineInfo): RoutineProject[] => {
@@ -214,7 +220,7 @@ export function RoutinesPage() {
 
     try {
       if (entry) {
-        await global.ensureServerCtx(entry.server).sdk.api.experimental.routine.update({
+        await ctxFor(entry.server).sdk.api.experimental.routine.update({
           routineID: entry.info.id,
           title: input.title,
           when: input.when,
@@ -227,7 +233,7 @@ export function RoutinesPage() {
         })
       } else {
         if (!server) return
-        await global.ensureServerCtx(server).sdk.api.experimental.routine.create(input)
+        await ctxFor(server).sdk.api.experimental.routine.create(input)
       }
 
       setStore("editor", { open: false, entry: undefined, server: undefined })

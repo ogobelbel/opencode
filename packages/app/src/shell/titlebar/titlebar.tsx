@@ -1,6 +1,6 @@
 import { createEffect, createMemo, createSignal, Match, on, onCleanup, Show, Switch, untrack } from "solid-js"
 import { Portal } from "solid-js/web"
-import { useLocation } from "@solidjs/router"
+import { useLocation, useNavigate } from "@solidjs/router"
 import { uuid } from "@opencode/util/uuid"
 import { useDialog } from "@opencode/ui/context/dialog"
 import { IconButton } from "@opencode/ui/icon-button"
@@ -200,6 +200,7 @@ export function Titlebar(props: { verticalTabs?: { mount?: HTMLElement } }) {
         <Match when>
           {(_) => {
             const layout = useLayout()
+            const navigate = useNavigate()
             const global = useGlobal()
 
             const tabs = useTabs()
