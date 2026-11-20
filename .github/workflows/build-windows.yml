@@ -1,0 +1,93 @@
+name: build-windows
+
+# Builds one unsigned Windows x64 desktop installer on demand, on a GitHub-hosted runner.
+# Reproduces release.yml's build-cli and build-desktop jobs for the windows-x64 target without the
+# release environment, secrets or signing steps, so a fork can produce an installer to try out.
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  windows-x64:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    env:
+      # Stable channel: the desktop app is packaged as "OpenCode" and the CLI reports this version.
+      OPENCODE_CHANNEL: latest
+      OPENCODE_VERSION: 2.3.0
+      NODE_OPTIONS: --max-old-space-size=4096
+    steps:
+      - name: Check out
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - name: Set up Bun
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: 1.4.4
+      - name: Fetch models catalog
+        run: bun packages/core/script/update-models-snapshot.ts .cache/models-catalog/api.json
+      # The desktop bundles the CLI package for its target, and for windows-x64 that package is the
+      # baseline build (see CLI_BINARIES in packages/desktop/script/utils.ts), so build exactly that.
+      - name: Build CLI
+        working-directory: packages/cli
+        run: bun run build && rm -rf dist/.bun
+        env:
+          OPENCODE_TARGET: windows-x64-baseline
+          BUN_COMPILE_RELEASE: bun-v1.4.4
+          OPENCODE_MODELS_SNAPSHOT: ${{ github.workspace }}/.cache/models-catalog/api.json
+          GH_TOKEN: ${{ github.token }} # read-only; raises the rate limit for Bun release downloads
+      - name: Verify bundled models catalog
+        run: bun packages/cli/script/catalog-smoke.ts packages/cli/dist/cli-windows-x64-baseline/bin/opencode.exe
+        env:
+          OPENCODE_MODELS_SNAPSHOT: ${{ github.workspace }}/.cache/models-catalog/api.json
+      - name: Build desktop
+        working-directory: packages/desktop
+        run: bun run build
+        env:
+          OPENCODE_TARGET: windows-x64
+      # First pack produces the unpacked app; the installer is packed around it, as release.yml does
+      # after signing (there is no signing here, so the app goes straight to the installer).
+      - name: Pack portable app
+        working-directory: packages/desktop
+        timeout-minutes: 60
+        run: bun run pack
+        env:
+          OPENCODE_TARGET: windows-x64
+      - name: Keep the portable app
+        run: |
+          mkdir -p "$RUNNER_TEMP/portable"
+          cp -r dist/desktop/app "$RUNNER_TEMP/portable/app"
+          mkdir -p dist/portable
+          powershell -NoProfile -Command "Compress-Archive -Path '$RUNNER_TEMP/portable/app/*' -DestinationPath 'dist/portable/opencode-desktop-win-x64-portable.zip'"
+      - name: Pack NSIS installer
+        working-directory: packages/desktop
+        timeout-minutes: 30
+        run: bun run pack
+        env:
+          OPENCODE_TARGET: windows-x64
+          OPENCODE_DESKTOP_APP: ${{ runner.temp }}/portable/app
+          # No certificate is configured; never try to sign.
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      - name: Collect artifacts
+        run: |
+          mkdir -p dist/artifacts
+          cp dist/desktop/opencode-desktop-win-x64.exe dist/artifacts/
+          cp dist/portable/opencode-desktop-win-x64-portable.zip dist/artifacts/
+          ls -lh dist/artifacts
+      - name: Upload
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: opencode-windows-x64
+          path: dist/artifacts
+          if-no-files-found: error
