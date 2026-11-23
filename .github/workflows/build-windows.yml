@@ -1,17 +1,22 @@
 name: build-windows
 
-# Builds one unsigned Windows x64 desktop installer on demand, on a GitHub-hosted runner.
+# Builds one unsigned Windows x64 desktop installer on a GitHub-hosted runner and publishes it as a release of
+# this fork, which is the update feed of the installed app (electron-builder publish: github, ogobelbel/opencode).
 # Reproduces release.yml's build-cli and build-desktop jobs for the windows-x64 target without the
-# release environment, secrets or signing steps, so a fork can produce an installer to try out.
+# release environment, secrets or signing steps.
+# Every build gets version X.Y.((Z+1)*1000+run): above the previous build and never equal to an upstream X.Y.Z,
+# so the app sees each build as an update (it ignores prereleases, so no "-suffix" versions).
 on:
   workflow_dispatch:
+  push:
+    branches: [routines-only]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
-  contents: read
+  contents: write # gh release create
 
 defaults:
   run:
@@ -24,13 +29,19 @@ jobs:
     env:
       # Stable channel: the desktop app is packaged as "OpenCode" and the CLI reports this version.
       OPENCODE_CHANNEL: latest
-      OPENCODE_VERSION: 2.3.0
       NODE_OPTIONS: --max-old-space-size=4096
     steps:
       - name: Check out
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           persist-credentials: false
+      - name: Pick the version
+        run: |
+          base=$(node -p "require('./packages/desktop/package.json').version")
+          IFS=. read -r major minor patch <<< "${base%%-*}"
+          version="$major.$minor.$(( (patch + 1) * 1000 + GITHUB_RUN_NUMBER ))"
+          echo "OPENCODE_VERSION=$version" >> "$GITHUB_ENV"
+          echo "upstream $base -> build $version"
       - name: Set up Bun
         uses: ./.github/actions/setup-bun
         with:
@@ -81,13 +92,37 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
       - name: Collect artifacts
         run: |
-          mkdir -p dist/artifacts
-          cp dist/desktop/opencode-desktop-win-x64.exe dist/artifacts/
+          mkdir -p dist/artifacts dist/release
+          exe=opencode-desktop-win-x64.exe
+          cp "dist/desktop/$exe" dist/artifacts/
           cp dist/portable/opencode-desktop-win-x64-portable.zip dist/artifacts/
-          ls -lh dist/artifacts
+          cp "dist/desktop/$exe" dist/release/
+          [ -f "packages/desktop/dist/$exe.blockmap" ] && cp "packages/desktop/dist/$exe.blockmap" dist/release/
+          # electron-updater reads latest.yml from the release. Use electron-builder's when it matches this
+          # version, otherwise write the same fields it would.
+          if grep -qx "version: $OPENCODE_VERSION" packages/desktop/dist/latest.yml 2>/dev/null; then
+            cp packages/desktop/dist/latest.yml dist/release/
+            echo "latest.yml from electron-builder"
+          else
+            sha=$(openssl dgst -sha512 -binary "dist/release/$exe" | base64 | tr -d '\n')
+            size=$(wc -c < "dist/release/$exe" | tr -d ' ')
+            printf '%s\n' "version: $OPENCODE_VERSION" "files:" "  - url: $exe" "    sha512: $sha" "    size: $size" \
+              "path: $exe" "sha512: $sha" "releaseDate: '$(date -u +%Y-%m-%dT%H:%M:%S.000Z)'" > dist/release/latest.yml
+            echo "latest.yml written by this workflow"
+          fi
+          cat dist/release/latest.yml
+          ls -lh dist/artifacts dist/release
       - name: Upload
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: opencode-windows-x64
           path: dist/artifacts
           if-no-files-found: error
+      - name: Publish the release (the app's update feed)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "v$OPENCODE_VERSION" dist/release/* \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --latest \
+            --title "OpenCode routines $OPENCODE_VERSION (Windows)" \
+            --notes "Unsigned Windows build of routines-only at $GITHUB_SHA. The installed app updates itself from this release."
